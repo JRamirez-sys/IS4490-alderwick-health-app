@@ -1,7 +1,7 @@
 # This is a test.
 # Alderwick Family Health Web Application
 
-The patient website and staff application for **Alderwick Family Health**, a fictional medical group with four clinics in the Salt Lake valley plus a video-visit service. Built with Django and SQLite.
+The patient website and staff application for **Alderwick Family Health**, a fictional medical group with four clinics in the Salt Lake valley plus a video-visit service. Built with Django and SQLite..
 
 The application serves four types of users:
 
