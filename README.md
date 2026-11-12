@@ -24,7 +24,8 @@ Sign-in details for every account are in **[USER-GUIDE.md](USER-GUIDE.md)**.
 2. Start the server:
 
    ```bash
-   python manage.py runserver 0.0.0.0:8000
+   
+   
    ```
 
 3. Open the forwarded port 8000 when VS Code prompts you, or from the **Ports** tab.

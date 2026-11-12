@@ -12,6 +12,8 @@ urlpatterns = [
     path("staff/clinician/", include("clinician.urls")),
     path("staff/ai-operations/", include("aiops.urls")),
     path("dev/", include("devtools.urls")),  # developer tools, only served when DEBUG is on
+    path("staff/front-office/website-chats/", include("chatbot.staff_urls")),
+    path("chatbot/", include("chatbot.urls")),
     path("", include("public.urls")),
 ]
 

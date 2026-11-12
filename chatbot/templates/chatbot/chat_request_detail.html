@@ -1,0 +1,37 @@
+{% extends "frontdesk/base.html" %}
+{% block title %}Chat Request {{ item.reference }} | Alderwick{% endblock %}
+{% block content %}
+<div class="breadcrumbs"><a href="{% url 'chatbot_staff:chat_requests' %}">Website chat requests</a> / {{ item.reference }}</div>
+<div class="page-header"><div><h1>{{ item.name }}</h1><p>{{ item.reference }} &middot; received {{ item.created_at|date:"M j, Y g:i A" }} from the website chatbot</p></div>{% status_badge item.status item.get_status_display %}</div>
+<div class="layout-main-aside">
+<div class="stack">
+  <div class="card"><div class="card-body">
+    <h2>Question</h2>
+    <p style="white-space:pre-line">{{ item.message }}</p>
+    <dl class="dl"><dt>Chat topic</dt><dd>{{ item.topic|default:"Not detected" }}</dd></dl>
+  </div></div>
+  <div class="alert alert-info">This visitor is not signed in or verified. Confirm their identity before discussing any patient information.</div>
+</div>
+<aside class="stack">
+  <div class="card"><div class="card-body">
+    <h3>Contact</h3>
+    <dl class="dl" style="grid-template-columns:70px 1fr">
+      <dt>Phone</dt><dd>{{ item.phone|default:"-" }}</dd>
+      <dt>Email</dt><dd>{% if item.email %}<a href="mailto:{{ item.email }}">{{ item.email }}</a>{% else %}-{% endif %}</dd>
+    </dl>
+  </div></div>
+  <div class="card"><div class="card-body">
+    <h3>Follow-up</h3>
+    <form method="post" action="{% url 'chatbot_staff:chat_request_detail' item.pk %}">{% csrf_token %}
+      {% include "includes/field.html" with field=form.staff_notes %}
+      <div class="form-actions">
+        {% if item.is_open %}<button class="btn" type="submit" name="action" value="close">Mark handled</button>
+        {% else %}<button class="btn btn-secondary" type="submit" name="action" value="reopen">Reopen</button>{% endif %}
+        <button class="btn btn-secondary" type="submit" name="action" value="save_notes">Save notes</button>
+      </div>
+    </form>
+    {% if item.handled_by %}<p class="muted" style="font-size:.82rem;margin-top:10px">Handled by {{ item.handled_by.display_name }} &middot; {{ item.handled_at|date:"M j, g:i A" }}</p>{% endif %}
+  </div></div>
+</aside>
+</div>
+{% endblock %}

@@ -1,0 +1,66 @@
+/* Alderwick website chatbot widget. Uses the colour tokens from alderwick.css. */
+.chatbot { position: fixed; right: 20px; bottom: 20px; z-index: 50; font-size: .92rem; }
+.chatbot-launcher {
+  display: inline-flex; align-items: center; gap: 8px; padding: 12px 18px; border: none; border-radius: 999px;
+  background: var(--brand); color: #fff; font: inherit; font-weight: 600; cursor: pointer;
+  box-shadow: 0 6px 20px rgba(19, 50, 74, .25);
+}
+.chatbot-launcher:hover { background: var(--brand-dark); }
+.chatbot-launcher:focus-visible, .chatbot-chip:focus-visible, .chatbot-close:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.chatbot.is-open .chatbot-launcher { display: none; }
+
+.chatbot-panel {
+  width: 370px; max-width: calc(100vw - 32px); height: 560px; max-height: calc(100vh - 40px);
+  display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 14px; box-shadow: 0 12px 36px rgba(19, 50, 74, .22); overflow: hidden;
+}
+.chatbot-panel[hidden] { display: none; }
+.chatbot-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 14px 16px; background: var(--brand); color: #fff; }
+.chatbot-header h2 { color: #fff; font-size: 1rem; margin: 0; }
+.chatbot-header p { margin: 2px 0 0; font-size: .78rem; color: #d9efee; }
+.chatbot-close { background: none; border: none; color: #fff; font-size: 1.5rem; line-height: 1; cursor: pointer; padding: 0 4px; border-radius: 6px; }
+.chatbot-close:hover { background: rgba(255, 255, 255, .15); }
+.chatbot-notice { margin: 0; padding: 8px 16px; font-size: .78rem; background: var(--danger-light); color: #6d1712; border-bottom: 1px solid var(--line); }
+
+.chatbot-log { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; background: var(--page); }
+.chatbot-msg { max-width: 88%; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); }
+.chatbot-msg p { margin: 0; white-space: pre-line; overflow-wrap: anywhere; }
+.chatbot-msg-bot { align-self: flex-start; border-bottom-left-radius: 4px; }
+.chatbot-msg-user { align-self: flex-end; background: var(--brand-light); border-color: #c9e3e2; border-bottom-right-radius: 4px; }
+.chatbot-msg.is-typing { color: var(--muted); font-style: italic; }
+.chatbot-msg.is-urgent { background: var(--danger-light); border-color: #f0c4c0; color: #6d1712; font-weight: 600; }
+.chatbot-links { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.chatbot-links a { font-weight: 600; }
+.chatbot-links a::after { content: " \2192"; }
+
+.chatbot-suggestions { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 14px; border-top: 1px solid var(--line); }
+.chatbot-suggestions:empty, .chatbot-suggestions[hidden] { display: none; }
+.chatbot-chip { border: 1px solid #b9d8d6; background: #fff; color: var(--brand-dark); border-radius: 999px; padding: 4px 10px; font: inherit; font-size: .8rem; font-weight: 600; cursor: pointer; }
+.chatbot-chip:hover { background: var(--brand-light); }
+.chatbot-chip-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chatbot-chip-primary:hover { background: #bd6c1b; }
+
+.chatbot-input { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
+.chatbot-input[hidden] { display: none; }
+.chatbot-input .input { flex: 1; min-width: 0; }
+
+.chatbot-contact { padding: 12px 14px; border-top: 1px solid var(--line); display: grid; gap: 8px; max-height: 60%; overflow-y: auto; }
+.chatbot-contact[hidden] { display: none; }
+.chatbot-contact-title { margin: 0; font-weight: 700; color: var(--navy); }
+.chatbot-contact label { display: grid; gap: 3px; font-size: .8rem; font-weight: 600; color: var(--navy); }
+.chatbot-contact .input { padding: 7px 9px; }
+.chatbot-help { margin: 0; font-size: .76rem; color: var(--muted); }
+.chatbot-error { margin: 0; font-size: .8rem; color: var(--danger); }
+.chatbot-error:empty { display: none; }
+.chatbot-contact-actions { display: flex; gap: 8px; }
+.chatbot-hp { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+
+@media (max-width: 640px) {
+  .chatbot { right: 12px; bottom: 12px; left: 12px; display: flex; justify-content: flex-end; pointer-events: none; }
+  .chatbot > * { pointer-events: auto; }
+  .chatbot-panel { width: 100%; max-width: none; height: calc(100vh - 24px); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .chatbot-panel:not([hidden]) { animation: chatbot-in .16s ease-out; }
+  @keyframes chatbot-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+}

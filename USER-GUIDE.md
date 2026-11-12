@@ -251,3 +251,25 @@ These patients are minors. Their records are visible to their care team and fron
 - **Dates move with you.** When the database is loaded, appointments, visits, messages, and requests are generated relative to that moment. "Today's schedule" always has patients in it. Reload the data (see `README.md`) to refresh the dates.
 - **Names and accounts never change.** Reloading the data recreates the same people, usernames, and medical record numbers.
 - **Logs.** Application requests are written to `logs/alderwick.log`. Security and patient-data access events are written to `logs/audit.log` and stored in the database.
+import os
+
+def get_codespace_url(port=5000):
+    """Return the public URL for an app running on `port` inside a GitHub Codespace."""
+    name = os.environ.get("CODESPACE_NAME")
+    domain = os.environ.get("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "app.github.dev")
+    if name:
+        return f"https://{name}-{port}.{domain}"
+    return f"http://localhost:{port}"  # running outside Codespaces
+
+if __name__ == "__main__":
+import os
+
+def get_codespace_url(port=5000):
+    """Return the public URL for an app running on `port` inside a GitHub Codespace."""
+    name = os.environ.get("CODESPACE_NAME")
+    domain = os.environ.get("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "app.github.dev")
+    if name:
+        return f"https://{name}-{port}.{domain}"
+    return f"http://localhost:{port}"  # running outside Codespaces
+
+if __name__ == "__main__":
