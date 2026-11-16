@@ -1,7 +1,8 @@
+import json
 from collections import OrderedDict
 
 from django.contrib import messages
-from django.http import Http404
+from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -10,12 +11,17 @@ from accounts.decorators import role_required
 from accounts.models import User
 from audit.models import AuditLog
 from audit.utils import log_event
-from clinic.models import Appointment, AppointmentRequest, MessageThread, Patient, Visit
+from clinic import gemini
+from clinic.models import Appointment, AppointmentRequest, Message, MessageThread, Patient, Visit
 from clinic.services import reply_to_thread, start_thread
 
 from .forms import CancelAppointmentForm, NewMessageForm, PortalAppointmentRequestForm, ReplyForm
 
 patient_required = role_required(User.Role.PATIENT)
+MAX_PAGE_TRANSLATION_SEGMENTS = 300
+MAX_PAGE_TRANSLATION_SEGMENT_LENGTH = 5000
+MAX_PAGE_TRANSLATION_CHARACTERS = 30000
+MAX_PAGE_TRANSLATION_REQUEST_BYTES = 100000
 
 
 def current_patient(request):
@@ -167,8 +173,123 @@ def thread_detail(request, pk):
     return render(
         request,
         "portal/thread.html",
-        {"patient": patient, "thread": thread, "thread_messages": thread.messages.all(), "form": form},
+        {
+            "patient": patient,
+            "thread": thread,
+            "thread_messages": thread.messages.all(),
+            "form": form,
+            "translation_url_name": "portal:translate_message",
+            "translate_all_messages": True,
+            "translation_target_language": patient.preferred_language,
+            "translation_note": (
+                "AI translations may contain errors. Contact your care team if you have questions "
+                "about medical instructions."
+            ),
+        },
     )
+
+
+@patient_required
+@require_POST
+def translate_message(request, pk, message_pk):
+    patient = current_patient(request)
+    thread = get_object_or_404(MessageThread.objects.select_related("patient"), pk=pk, patient=patient)
+    message = get_object_or_404(Message, pk=message_pk, thread=thread)
+    target_language = patient.preferred_language.strip()
+    if not target_language:
+        messages.error(request, "Add a preferred language to your profile before translating messages.")
+        return redirect("portal:thread", pk=thread.pk)
+
+    try:
+        translation = gemini.translate_to_language(message.body, target_language, actor_role=request.user.role)
+    except gemini.TranslationUnavailableError as exc:
+        messages.error(request, str(exc))
+        return redirect("portal:thread", pk=thread.pk)
+    except gemini.GeminiError:
+        messages.error(request, "The translation service is unavailable. The original message is unchanged.")
+        return redirect("portal:thread", pk=thread.pk)
+
+    if not translation:
+        messages.error(request, "No translation was returned. The original message is unchanged.")
+        return redirect("portal:thread", pk=thread.pk)
+
+    log_event(
+        request,
+        AuditLog.Action.TRANSLATE_MESSAGE,
+        patient=patient,
+        target=message,
+    )
+    return render(
+        request,
+        "portal/thread.html",
+        {
+            "patient": patient,
+            "thread": thread,
+            "thread_messages": thread.messages.all(),
+            "form": ReplyForm(),
+            "translation": translation,
+            "translated_message_id": message.pk,
+            "translation_url_name": "portal:translate_message",
+            "translate_all_messages": True,
+            "translation_target_language": target_language,
+            "translation_note": (
+                "AI translations may contain errors. Contact your care team if you have questions "
+                "about medical instructions."
+            ),
+        },
+    )
+
+
+@patient_required
+@require_POST
+def translate_page(request):
+    patient = current_patient(request)
+    if len(request.body) > MAX_PAGE_TRANSLATION_REQUEST_BYTES:
+        return JsonResponse({"error": "This page contains too much text to translate at once."}, status=413)
+
+    try:
+        payload = json.loads(request.body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse({"error": "Invalid translation request."}, status=400)
+
+    texts = payload.get("texts") if isinstance(payload, dict) else None
+    if (
+        not isinstance(texts, list)
+        or not texts
+        or len(texts) > MAX_PAGE_TRANSLATION_SEGMENTS
+        or not all(
+            isinstance(text, str) and text.strip() and len(text) <= MAX_PAGE_TRANSLATION_SEGMENT_LENGTH
+            for text in texts
+        )
+        or sum(len(text) for text in texts if isinstance(text, str)) > MAX_PAGE_TRANSLATION_CHARACTERS
+    ):
+        return JsonResponse({"error": "The page text is empty or too large to translate."}, status=400)
+
+    target_language = patient.preferred_language.strip()
+    if not target_language:
+        return JsonResponse({"error": "Add a preferred language to your profile before translating."}, status=400)
+
+    try:
+        translations = gemini.translate_text_batch(
+            texts,
+            target_language,
+            actor_role=request.user.role,
+            operation="portal_page_translation",
+        )
+    except gemini.TranslationUnavailableError as exc:
+        return JsonResponse({"error": str(exc)}, status=503)
+    except gemini.GeminiError:
+        return JsonResponse({"error": "The translation service is unavailable. Please try again."}, status=503)
+
+    log_event(
+        request,
+        AuditLog.Action.TRANSLATE_PORTAL_PAGE,
+        patient=patient,
+        target=patient,
+        target_language=target_language,
+        text_segment_count=len(texts),
+    )
+    return JsonResponse({"translations": translations, "target_language": target_language})
 
 
 @patient_required

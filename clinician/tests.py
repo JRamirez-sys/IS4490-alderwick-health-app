@@ -1,11 +1,13 @@
 import datetime
+from unittest import mock
 
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from audit.models import AuditLog
-from clinic.models import Appointment, LabResult, MessageThread, Visit
+from clinic import gemini
+from clinic.models import Appointment, LabResult, Message, MessageThread, Visit
 from clinic.testing import (
     local_dt,
     make_appointment,
@@ -214,3 +216,95 @@ class ClinicianMessagingTests(ClinicianTestCase):
         self.assertEqual(thread.status, MessageThread.Status.CLOSED)
         closed = self.client.get(reverse("clinician:inbox") + "?status=closed").context["threads"]
         self.assertIn(thread, closed)
+
+    @mock.patch("clinician.views.gemini.translate_to_english", return_value="I have a question.")
+    def test_doctor_can_translate_assigned_patient_message(self, translate_to_english):
+        thread = make_thread(patient=self.patient, category="clinical")
+        message = Message.objects.create(
+            thread=thread,
+            sender_name=self.patient.full_name,
+            from_patient=True,
+            body="Tengo una pregunta.",
+        )
+
+        response = self.client.post(
+            reverse("clinician:translate_message", args=[thread.pk, message.pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Translate with AI")
+        self.assertContains(response, "AI-generated English translation")
+        self.assertContains(response, "I have a question.")
+        translate_to_english.assert_called_once_with(message.body, actor_role="doctor")
+        message.refresh_from_db()
+        self.assertEqual(message.body, "Tengo una pregunta.")
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action=AuditLog.Action.TRANSLATE_MESSAGE,
+                patient=self.patient,
+                object_id=str(message.pk),
+            ).exists()
+        )
+
+    def test_translation_is_scoped_to_assigned_patient_messages(self):
+        thread = make_thread(patient=self.patient, category="clinical")
+        staff_message = Message.objects.create(
+            thread=thread,
+            sender_name=self.provider.display_name,
+            from_patient=False,
+            body="I can help.",
+        )
+        colleague_thread = make_thread(patient=self.stranger, category="clinical")
+        colleague_message = Message.objects.create(
+            thread=colleague_thread,
+            sender_name=self.stranger.full_name,
+            from_patient=True,
+            body="Hola.",
+        )
+
+        staff_response = self.client.post(
+            reverse("clinician:translate_message", args=[thread.pk, staff_message.pk])
+        )
+        colleague_response = self.client.post(
+            reverse("clinician:translate_message", args=[colleague_thread.pk, colleague_message.pk])
+        )
+
+        self.assertEqual(staff_response.status_code, 404)
+        self.assertEqual(colleague_response.status_code, 404)
+
+    @mock.patch("clinician.views.gemini.translate_to_english", return_value="Hello.")
+    def test_patient_cannot_access_translation_endpoint(self, translate_to_english):
+        thread = make_thread(patient=self.patient, category="clinical")
+        message = Message.objects.create(
+            thread=thread,
+            sender_name=self.patient.full_name,
+            from_patient=True,
+            body="Hola.",
+        )
+        self.client.force_login(make_user("patient"))
+
+        response = self.client.post(
+            reverse("clinician:translate_message", args=[thread.pk, message.pk])
+        )
+
+        self.assertEqual(response.status_code, 403)
+        translate_to_english.assert_not_called()
+
+    @mock.patch("clinician.views.gemini.translate_to_english", side_effect=gemini.GeminiError("unavailable"))
+    def test_translation_failure_keeps_original_and_shows_error(self, translate_to_english):
+        thread = make_thread(patient=self.patient, category="clinical")
+        message = Message.objects.create(
+            thread=thread,
+            sender_name=self.patient.full_name,
+            from_patient=True,
+            body="Hola.",
+        )
+
+        response = self.client.post(
+            reverse("clinician:translate_message", args=[thread.pk, message.pk]),
+            follow=True,
+        )
+
+        self.assertContains(response, "translation service is unavailable")
+        message.refresh_from_db()
+        self.assertEqual(message.body, "Hola.")

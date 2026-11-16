@@ -1,4 +1,5 @@
 {% extends "layouts/public.html" %}
+{% load static %}
 {% block subnav %}
 <nav class="subnav" aria-label="Patient portal">
   <div class="container">
@@ -11,6 +12,12 @@
     <a href="{% url 'portal:messages' %}" {% if name == 'messages' or name == 'thread' or name == 'new_message' %}class="active"{% endif %}>Messages</a>
     <a href="{% url 'portal:profile' %}" {% if name == 'profile' %}class="active"{% endif %}>Profile</a>
     {% endwith %}
+    <form class="inline-form" method="post" action="{% url 'portal:translate_page' %}" data-translation-control data-patient-id="{{ patient.pk }}" style="margin-left:auto; flex:none; padding:6px 0">
+      {% csrf_token %}
+      <button class="btn btn-secondary btn-sm" id="portal-page-translate-button" type="button" aria-pressed="false">Translate with AI</button>
+      <span class="muted" id="portal-page-translation-status" role="status" aria-live="polite"></span>
+    </form>
   </div>
 </nav>
+<script src="{% static 'js/portal-translation.js' %}" defer></script>
 {% endblock %}

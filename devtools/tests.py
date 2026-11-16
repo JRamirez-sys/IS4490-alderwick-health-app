@@ -4,6 +4,7 @@ from unittest import mock
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
+from aiops.models import AIOperation, AIConfiguration
 from clinic import gemini
 
 
@@ -41,19 +42,43 @@ class GeminiCheckPageTests(TestCase):
 
 
 class GeminiClientTests(TestCase):
-    @mock.patch.dict(os.environ, {"GEMINI_API_KEY": "", "GOOGLE_API_KEY": ""}, clear=False)
+    @mock.patch.dict(os.environ, {"GEMINI_API_KEY": "", "GOOGLE_API_KEY": ""}, clear=True)
     def test_missing_key_raises(self):
         with self.assertRaises(gemini.GeminiError):
             gemini.generate_text("Hello")
+        operation = AIOperation.objects.get()
+        self.assertEqual(operation.status, AIOperation.Status.FAILED)
+        self.assertEqual(operation.error_type, "GeminiError")
 
     @mock.patch.dict(os.environ, {"GEMINI_API_KEY": "k", "GEMINI_MODEL": "test-model"}, clear=False)
     @mock.patch("clinic.gemini.genai.Client")
     def test_generate_text_returns_reply(self, client_class):
         client_class.return_value.models.generate_content.return_value = mock.Mock(text="Hi there")
         self.assertEqual(gemini.generate_text("Hello"), "Hi there")
+        operation = AIOperation.objects.get()
+        self.assertEqual(operation.status, AIOperation.Status.SUCCEEDED)
+        self.assertEqual(operation.model, "test-model")
         client_class.return_value.models.generate_content.assert_called_once_with(
             model="test-model", contents="Hello", config=None
         )
+
+    @mock.patch.dict(os.environ, {"GEMINI_API_KEY": "k"}, clear=False)
+    @mock.patch("clinic.gemini.genai.Client")
+    def test_generate_text_supports_json_responses(self, client_class):
+        client_class.return_value.models.generate_content.return_value = mock.Mock(text='{"translations": []}')
+        gemini.generate_text(
+            "[]",
+            system_instruction="Translate the input.",
+            response_mime_type="application/json",
+        )
+
+        config = client_class.return_value.models.generate_content.call_args.kwargs["config"]
+        self.assertEqual(config.system_instruction, "Translate the input.")
+        self.assertEqual(config.response_mime_type, "application/json")
+
+        operation = AIOperation.objects.get()
+        self.assertEqual(operation.operation, AIOperation.Operation.TEXT_GENERATION)
+        self.assertEqual(operation.status, AIOperation.Status.SUCCEEDED)
 
     @mock.patch.dict(os.environ, {"GEMINI_API_KEY": "k"}, clear=False)
     @mock.patch("clinic.gemini.genai.Client")
@@ -61,3 +86,69 @@ class GeminiClientTests(TestCase):
         client_class.return_value.models.generate_content.side_effect = RuntimeError("boom")
         with self.assertRaises(gemini.GeminiError):
             gemini.generate_text("Hello")
+        operation = AIOperation.objects.get()
+        self.assertEqual(operation.status, AIOperation.Status.FAILED)
+        self.assertEqual(operation.error_type, "RuntimeError")
+
+
+class GeminiTranslationTests(TestCase):
+    @mock.patch(
+        "clinic.gemini.generate_text",
+        return_value='{"translations": ["Inicio", "Resumen de salud"]}',
+    )
+    def test_translate_text_batch_preserves_order(self, generate_text):
+        result = gemini.translate_text_batch(["Home", "Health summary"], "Spanish")
+
+        self.assertEqual(result, ["Inicio", "Resumen de salud"])
+        self.assertEqual(generate_text.call_args.kwargs["response_mime_type"], "application/json")
+        self.assertEqual(
+            generate_text.call_args.kwargs["operation"],
+            "portal_page_translation",
+        )
+        self.assertEqual(generate_text.call_args.kwargs["input_count"], 2)
+        self.assertIn('"target_language": "Spanish"', generate_text.call_args.args[0])
+
+    @mock.patch("clinic.gemini.generate_text", return_value="Hola")
+    def test_message_translation_passes_operation_metadata(self, generate_text):
+        self.assertEqual(gemini.translate_to_language("Hello", "Spanish", actor_role="patient"), "Hola")
+        self.assertEqual(generate_text.call_args.kwargs["operation"], "message_translation")
+        self.assertEqual(generate_text.call_args.kwargs["actor_role"], "patient")
+        self.assertEqual(generate_text.call_args.kwargs["target_language"], "Spanish")
+        self.assertEqual(generate_text.call_args.kwargs["model"], gemini.model_name())
+
+    @mock.patch.dict(os.environ, {"GEMINI_APPROVED_MODELS": "approved-model"}, clear=False)
+    @mock.patch("clinic.gemini.generate_text")
+    def test_translation_uses_published_configuration(self, generate_text):
+        AIConfiguration.objects.create(
+            selected_model="approved-model",
+            target_languages=["Spanish"],
+            supplemental_instruction="Use plain language.",
+        )
+        generate_text.return_value = "Hola"
+
+        result = gemini.translate_to_language("Hello", "Spanish")
+
+        self.assertEqual(result, "Hola")
+        self.assertEqual(generate_text.call_args.kwargs["model"], "approved-model")
+        self.assertIn("Use plain language.", generate_text.call_args.kwargs["system_instruction"])
+        self.assertIn("Fixed translation requirements", generate_text.call_args.kwargs["system_instruction"])
+
+    @mock.patch("clinic.gemini.generate_text")
+    def test_disabled_or_unavailable_translations_never_call_model(self, generate_text):
+        AIConfiguration.objects.create(translation_enabled=False)
+        with self.assertRaises(gemini.TranslationUnavailableError):
+            gemini.translate_to_language("Hello", "Spanish")
+
+        configuration = AIConfiguration.objects.get(pk=1)
+        configuration.translation_enabled = True
+        configuration.target_languages = ["Spanish"]
+        configuration.save()
+        with self.assertRaises(gemini.TranslationUnavailableError):
+            gemini.translate_to_language("Hello", "French")
+
+        generate_text.assert_not_called()
+
+    @mock.patch("clinic.gemini.generate_text", return_value='{"translations": ["Inicio"]}')
+    def test_translate_text_batch_rejects_incomplete_response(self, generate_text):
+        with self.assertRaises(gemini.GeminiError):
+            gemini.translate_text_batch(["Home", "Health summary"], "Spanish")

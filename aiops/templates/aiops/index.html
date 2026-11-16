@@ -7,9 +7,77 @@
 {% endblock %}
 {% block content %}
 <div class="page-header"><div><h1>AI operations dashboard</h1><p>Monitoring for Alderwick's AI assistants.</p></div></div>
-<div class="card"><div class="empty empty-lg">
-  <h2>No AI services are connected yet</h2>
-  <p>Alderwick has not deployed any AI assistants. Once assistants are integrated into the patient site, front-office workspace, or clinician workspace, their usage and performance will be reported here.</p>
-  <p class="muted">Access to this workspace is limited to the AI engineering team.</p>
-</div></div>
+<div class="grid grid-2" style="margin-bottom:18px">
+  <div class="card stat"><div class="label">AI operations recorded</div><div class="value">{{ total_operations }}</div></div>
+  <div class="card stat stat-warn"><div class="label">Failed model calls</div><div class="value">{{ failed_operations }}</div></div>
+</div>
+<div class="grid grid-2" style="margin-bottom:18px">
+  <div class="card">
+    <div class="card-header"><h2>Active translation settings</h2></div>
+    <div class="card-body">
+      <p><strong>Translation:</strong> {% if configuration.translation_enabled %}Enabled{% else %}Disabled{% endif %}</p>
+      <p><strong>Gemini model:</strong> {{ active_model }}</p>
+      <p><strong>Available languages:</strong> {{ configuration.target_languages|join:", " }}</p>
+      <p><strong>Supplemental guidance:</strong><br>{{ configuration.supplemental_instruction|default:"None"|linebreaksbr }}</p>
+      <p class="muted">Core translation safeguards are fixed in code and cannot be changed here.</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <h2>Configure translation</h2>
+        {% if configuration.has_draft %}
+        <p class="muted">Draft saved {{ configuration.draft_updated_at|date:"M j, Y g:i A" }}{% if configuration.draft_updated_by %} by {{ configuration.draft_updated_by.display_name }}{% endif %}. It is not active yet.</p>
+        {% else %}
+        <p class="muted">Save changes as a draft, then publish to activate them.</p>
+        {% endif %}
+      </div>
+    </div>
+    <div class="card-body">
+      <form method="post" action="{% url 'aiops:save_settings_draft' %}">
+        {% csrf_token %}
+        {% include "includes/field.html" with field=settings_form.translation_enabled %}
+        {% include "includes/field.html" with field=settings_form.selected_model %}
+        {% include "includes/field.html" with field=settings_form.target_languages %}
+        {% include "includes/field.html" with field=settings_form.supplemental_instruction %}
+        <p class="muted">Only approved models can be selected: {{ approved_models|join:", " }}. Supplemental guidance is limited to style and terminology and cannot replace the fixed translation requirements.</p>
+        <button class="btn" type="submit">Save draft</button>
+      </form>
+      {% if configuration.has_draft %}
+      <form method="post" action="{% url 'aiops:publish_settings' %}" style="margin-top:12px">
+        {% csrf_token %}
+        <button class="btn btn-accent" type="submit">Publish draft</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+<div class="card">
+  <div class="card-header"><div><h2>Recent AI activity</h2><p class="muted">Latest 100 model calls. Prompts, responses, and patient identifiers are not stored here.</p></div></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr><th>Time</th><th>Function</th><th>Model</th><th>Requested by</th><th>Language</th><th>Items</th><th>Status</th><th>Duration</th><th>Error type</th></tr>
+      </thead>
+      <tbody>
+        {% for operation in operations %}
+        <tr>
+          <td>{{ operation.created_at|date:"M j, Y g:i:s A" }}</td>
+          <td>{{ operation.get_operation_display }}</td>
+          <td>{{ operation.model }}</td>
+          <td>{{ operation.actor_role|default:"System" }}</td>
+          <td>{{ operation.target_language|default:"-" }}</td>
+          <td>{{ operation.input_count }}</td>
+          <td>{% status_badge operation.status operation.get_status_display %}</td>
+          <td>{{ operation.duration_ms }} ms</td>
+          <td>{{ operation.error_type|default:"-" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="9" class="empty">No AI operations have been recorded yet. Use a translation feature to generate activity.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<p class="muted" style="margin-top:12px">This dashboard is limited to AI engineers. Activity metadata is shown for monitoring; message and page content is excluded.</p>
 {% endblock %}

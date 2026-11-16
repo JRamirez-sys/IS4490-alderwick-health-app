@@ -45,13 +45,16 @@ Every account of the same type shares one password.
 - See upcoming and past appointments, and cancel online up to 24 hours before a visit
 - Request appointments
 - View their own health summary (allergies, conditions, medications), test results, and signed visit notes
-- Send and reply to secure messages. Scheduling, billing, and records messages go to the front office. Prescription, test result, and medical questions go to the patient's primary care provider.
+- Send and reply to secure messages. Scheduling, billing, and records messages go to the front office. Prescription, test result, and medical questions go to the patient's primary care provider. Translate any message in a conversation into the preferred language on your profile.
+- AI translations may contain errors. Contact your care team if you have questions about medical instructions.
+- Use **Translate with AI** in the patient portal navigation to translate the currently open page, including its labels and patient-specific content, into your preferred language. Translation remains on while you move between portal tabs in the same browser tab; tap **Translate with AI** again to restore the current page and turn translation off. Translated text is not saved.
 
 Patients can only ever see their own records.
 
 ### Front office
 
 - Work the appointment request queue: review, add notes, decline, link to an existing patient, or schedule into an open slot (which registers new patients)
+- Translate patient-entered appointment request details into English from the request detail page; the original request is unchanged
 - View each location's daily schedule and check patients in, mark no-shows, or cancel
 - Answer front-office patient messages
 - Look up patients and book appointments by phone
@@ -69,7 +72,10 @@ Doctors cannot open charts of patients outside their care relationships. Every a
 
 ### AI engineers
 
-- Access the AI operations workspace. It has no data yet, because the application has no AI features.
+- Review recent AI model calls in the AI operations dashboard, including the operation, model, requesting role, target language, input count, status, duration, and failure type.
+- Configure AI translation by saving a draft and explicitly publishing it. Engineers can enable or disable translation, select an environment-approved Gemini model, choose available languages, and set supplemental style or terminology guidance.
+- Core translation safeguards are fixed in code and cannot be changed through the dashboard. Supplemental guidance should contain no patient data.
+- The dashboard deliberately excludes prompts, translations, patient names, and record identifiers.
 
 AI engineers cannot open the patient portal, front-office, or clinician workspaces.
 

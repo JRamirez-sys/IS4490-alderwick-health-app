@@ -16,5 +16,7 @@ urlpatterns = [
     path("messages/", views.message_list, name="messages"),
     path("messages/new/", views.new_message, name="new_message"),
     path("messages/<int:pk>/", views.thread_detail, name="thread"),
+    path("messages/<int:pk>/translate/<int:message_pk>/", views.translate_message, name="translate_message"),
+    path("translate-page/", views.translate_page, name="translate_page"),
     path("profile/", views.profile, name="profile"),
 ]

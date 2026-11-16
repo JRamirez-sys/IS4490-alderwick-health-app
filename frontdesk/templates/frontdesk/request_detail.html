@@ -14,6 +14,19 @@
         <dt>Preferred location</dt><dd>{{ req.preferred_office.name|default:"No preference" }}</dd>
         <dt>Availability</dt><dd>{{ req.preferred_times|default:"Not specified" }}</dd>
       </dl>
+      {% if request_translations %}
+      <div class="alert alert-info" role="status">
+        <strong>AI-generated English translation</strong>
+        {% for item in request_translations %}
+        <p><strong>{{ item.label }}:</strong><br>{{ item.text|linebreaksbr }}</p>
+        {% endfor %}
+        <small>Review translations for accuracy. The submitted request remains unchanged.</small>
+      </div>
+      {% endif %}
+      <form method="post" action="{% url 'frontdesk:translate_request' req.pk %}" class="form-actions">
+        {% csrf_token %}
+        <button class="btn btn-secondary btn-sm" type="submit">Translate with AI</button>
+      </form>
     </div></div>
 
     {% if req.status == 'scheduled' and req.appointment %}

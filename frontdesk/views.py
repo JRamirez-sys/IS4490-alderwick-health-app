@@ -12,10 +12,12 @@ from accounts.decorators import role_required
 from accounts.models import User
 from audit.models import AuditLog
 from audit.utils import log_event
+from clinic import gemini
 from clinic.models import (
     Appointment,
     AppointmentRequest,
     AppointmentType,
+    Message,
     MessageThread,
     Office,
     Patient,
@@ -111,6 +113,62 @@ def request_detail(request, pk):
         "notes_form": StaffNotesForm(initial={"staff_notes": appointment_request.staff_notes}),
         "decline_form": DeclineForm(),
         "new_patient_form": NewPatientDetailsForm(),
+    }
+    if appointment_request.is_open:
+        context.update(
+            slot_picker_context(
+                request.GET,
+                default_provider=appointment_request.preferred_provider,
+                patient_plan=appointment_request.insurance_plan,
+            )
+        )
+    return render(request, "frontdesk/request_detail.html", context)
+
+
+@front_office_required
+@require_POST
+def translate_request(request, pk):
+    appointment_request = get_object_or_404(AppointmentRequest, pk=pk)
+    texts = [
+        ("reason", "Reason for visit", appointment_request.reason),
+        ("preferred_times", "Preferred availability", appointment_request.preferred_times),
+        ("insurance_other", "Other insurance", appointment_request.insurance_other),
+    ]
+    fields_to_translate = [(key, label, text) for key, label, text in texts if text.strip()]
+    if not fields_to_translate:
+        messages.error(request, "There is no patient-entered request text to translate.")
+        return redirect("frontdesk:request_detail", pk=appointment_request.pk)
+
+    try:
+        translated_texts = gemini.translate_text_batch(
+            [text for _, _, text in fields_to_translate],
+            "English",
+            actor_role=request.user.role,
+            operation="appointment_request_translation",
+        )
+    except gemini.TranslationUnavailableError as exc:
+        messages.error(request, str(exc))
+        return redirect("frontdesk:request_detail", pk=appointment_request.pk)
+    except gemini.GeminiError:
+        messages.error(request, "The translation service is unavailable. The original request is unchanged.")
+        return redirect("frontdesk:request_detail", pk=appointment_request.pk)
+
+    log_event(
+        request,
+        AuditLog.Action.TRANSLATE_APPOINTMENT_REQUEST,
+        patient=appointment_request.patient,
+        target=appointment_request,
+    )
+    context = {
+        "req": appointment_request,
+        "matches": [],
+        "notes_form": StaffNotesForm(initial={"staff_notes": appointment_request.staff_notes}),
+        "decline_form": DeclineForm(),
+        "new_patient_form": NewPatientDetailsForm(),
+        "request_translations": [
+            {"label": label, "text": translated}
+            for (_, label, _), translated in zip(fields_to_translate, translated_texts, strict=True)
+        ],
     }
     if appointment_request.is_open:
         context.update(
@@ -344,7 +402,55 @@ def thread_detail(request, pk):
     return render(
         request,
         "frontdesk/thread.html",
-        {"thread": thread, "thread_messages": thread.messages.all(), "form": form},
+        {
+            "thread": thread,
+            "thread_messages": thread.messages.all(),
+            "form": form,
+            "translation_url_name": "frontdesk:translate_message",
+        },
+    )
+
+
+@front_office_required
+@require_POST
+def translate_message(request, pk, message_pk):
+    thread = get_object_or_404(
+        MessageThread.objects.select_related("patient"),
+        pk=pk,
+        queue=MessageThread.Queue.FRONT_OFFICE,
+    )
+    message = get_object_or_404(Message, pk=message_pk, thread=thread, from_patient=True)
+
+    try:
+        translation = gemini.translate_to_english(message.body, actor_role=request.user.role)
+    except gemini.TranslationUnavailableError as exc:
+        messages.error(request, str(exc))
+        return redirect("frontdesk:thread", pk=thread.pk)
+    except gemini.GeminiError:
+        messages.error(request, "The translation service is unavailable. The original message is unchanged.")
+        return redirect("frontdesk:thread", pk=thread.pk)
+
+    if not translation:
+        messages.error(request, "No translation was returned. The original message is unchanged.")
+        return redirect("frontdesk:thread", pk=thread.pk)
+
+    log_event(
+        request,
+        AuditLog.Action.TRANSLATE_MESSAGE,
+        patient=thread.patient,
+        target=message,
+    )
+    return render(
+        request,
+        "frontdesk/thread.html",
+        {
+            "thread": thread,
+            "thread_messages": thread.messages.all(),
+            "form": ReplyForm(),
+            "translation": translation,
+            "translated_message_id": message.pk,
+            "translation_url_name": "frontdesk:translate_message",
+        },
     )
 
 

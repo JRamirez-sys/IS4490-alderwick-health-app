@@ -14,4 +14,5 @@ urlpatterns = [
     path("appointments/<int:appointment_pk>/note/", views.start_note, name="start_note"),
     path("inbox/", views.inbox, name="inbox"),
     path("inbox/<int:pk>/", views.thread_detail, name="thread"),
+    path("inbox/<int:pk>/translate/<int:message_pk>/", views.translate_message, name="translate_message"),
 ]

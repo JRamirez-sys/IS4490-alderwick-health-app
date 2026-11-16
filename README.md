@@ -7,14 +7,16 @@ The application serves four types of users:
 
 | User | Area | What they do |
 |---|---|---|
-| Patients and visitors | Public site and patient portal | Find providers, request appointments, view records, send messages |
-| Front office | `/staff/front-office/` | Work the request queue, schedule, check patients in, answer administrative messages |
-| Doctors | `/staff/clinician/` | Review schedules and charts, write and sign notes, answer clinical messages |
-| AI engineers | `/staff/ai-operations/` | AI operations workspace (empty: the application has no AI features) |
+| Patients and visitors | Public site and patient portal | Find providers, request appointments, view records, send and translate messages |
+| Front office | `/staff/front-office/` | Work the request queue, translate patient-entered request text and messages, schedule, check patients in, and answer administrative messages |
+| Doctors | `/staff/clinician/` | Review schedules and charts, write and sign notes, answer and translate clinical messages |
+| AI engineers | `/staff/ai-operations/` | Monitor AI operations and draft/publish translation settings |
 
 Sign-in details for every account are in **[USER-GUIDE.md](USER-GUIDE.md)**.
 
 > **All data is synthetic.** Never enter real names, health information, insurance details, or credentials.
+
+The patient portal includes an AI page-translation control that translates the visible portal page into the patient's preferred language. Use synthetic data only when testing; translation requests send the displayed text to Gemini.
 
 ---
 
@@ -59,6 +61,7 @@ Optional environment variables:
 | Variable | Purpose |
 |---|---|
 | `GEMINI_MODEL` | Model ID to use (default `gemini-3.5-flash-lite`) |
+| `GEMINI_APPROVED_MODELS` | Optional comma-separated allowlist of additional Gemini model IDs AI engineers may select. The configured `GEMINI_MODEL` is always approved. |
 | `GOOGLE_GENAI_USE_VERTEXAI` | Which endpoint the key is sent to. The Codespace sets it to `true`, which sends requests to Vertex AI (`aiplatform.googleapis.com`), as GCP project keys need. With an AI Studio key, set it to `false`, which sends requests to `generativelanguage.googleapis.com`. Using the wrong endpoint for your key fails with `403 API_KEY_SERVICE_BLOCKED`. |
 
 On your own computer, run `export GEMINI_API_KEY=...` before `runserver`. The `/dev/gemini/` page is not linked from the application and returns 404 when `DJANGO_DEBUG=0`. Send synthetic text only, never real patient information.

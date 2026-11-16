@@ -6,12 +6,14 @@ from django.db.models import Q
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from django.views.decorators.http import require_POST
 
 from accounts.decorators import role_required
 from accounts.models import User
 from audit.models import AuditLog
 from audit.utils import log_event
-from clinic.models import Appointment, LabResult, MessageThread, Patient, Provider, Visit
+from clinic import gemini
+from clinic.models import Appointment, LabResult, Message, MessageThread, Patient, Provider, Visit
 from clinic.services import patients_for_provider, provider_can_view_patient, reply_to_thread
 
 from .forms import ReplyForm, VisitNoteForm
@@ -279,5 +281,56 @@ def thread_detail(request, pk):
         "medications": thread.patient.medications.filter(is_active=True),
         "problems": thread.patient.problems.filter(status="active"),
         "recent_labs": thread.patient.lab_results.all()[:6],
+        "translation_url_name": "clinician:translate_message",
     }
     return render(request, "clinician/thread.html", context)
+
+
+@doctor_required
+@require_POST
+def translate_message(request, pk, message_pk):
+    provider = current_provider(request)
+    thread = get_object_or_404(
+        MessageThread.objects.select_related("patient"),
+        pk=pk,
+        queue=MessageThread.Queue.CLINICAL,
+        assigned_provider=provider,
+    )
+    message = get_object_or_404(Message, pk=message_pk, thread=thread, from_patient=True)
+
+    try:
+        translation = gemini.translate_to_english(message.body, actor_role=request.user.role)
+    except gemini.TranslationUnavailableError as exc:
+        messages.error(request, str(exc))
+        return redirect("clinician:thread", pk=thread.pk)
+    except gemini.GeminiError:
+        messages.error(request, "The translation service is unavailable. The original message is unchanged.")
+        return redirect("clinician:thread", pk=thread.pk)
+
+    if not translation:
+        messages.error(request, "No translation was returned. The original message is unchanged.")
+        return redirect("clinician:thread", pk=thread.pk)
+
+    log_event(
+        request,
+        AuditLog.Action.TRANSLATE_MESSAGE,
+        patient=thread.patient,
+        target=message,
+    )
+    return render(
+        request,
+        "clinician/thread.html",
+        {
+            "provider": provider,
+            "thread": thread,
+            "thread_messages": thread.messages.all(),
+            "form": ReplyForm(),
+            "patient": thread.patient,
+            "medications": thread.patient.medications.filter(is_active=True),
+            "problems": thread.patient.problems.filter(status="active"),
+            "recent_labs": thread.patient.lab_results.all()[:6],
+            "translation": translation,
+            "translated_message_id": message.pk,
+            "translation_url_name": "clinician:translate_message",
+        },
+    )

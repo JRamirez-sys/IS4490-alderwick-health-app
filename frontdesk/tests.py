@@ -1,11 +1,13 @@
 import datetime
+from unittest import mock
 
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from audit.models import AuditLog
-from clinic.models import Appointment, AppointmentRequest, MessageThread, Patient, Problem
+from clinic import gemini
+from clinic.models import Appointment, AppointmentRequest, Message, MessageThread, Patient, Problem
 from clinic.services import available_slots
 from clinic.testing import (
     local_dt,
@@ -113,6 +115,76 @@ class RequestQueueTests(FrontDeskTestCase):
         req = self.new_request(first_name="Mike", last_name="anderson", date_of_birth=self.patient.date_of_birth)
         response = self.client.get(reverse("frontdesk:request_detail", args=[req.pk]))
         self.assertIn(self.patient, list(response.context["matches"]))
+
+    @mock.patch(
+        "frontdesk.views.gemini.translate_text_batch",
+        return_value=["I need an appointment.", "In the mornings", "Health Insurance"],
+    )
+    def test_front_office_can_translate_patient_request_fields_without_changing_request(self, translate_text_batch):
+        req = self.new_request(
+            reason="Necesito una cita.",
+            preferred_times="Por las mañanas",
+            insurance_other="Seguro Salud",
+        )
+
+        response = self.client.post(reverse("frontdesk:translate_request", args=[req.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "AI-generated English translation")
+        self.assertContains(response, "I need an appointment.")
+        self.assertContains(response, "Health Insurance")
+        translate_text_batch.assert_called_once_with(
+            ["Necesito una cita.", "Por las mañanas", "Seguro Salud"],
+            "English",
+            actor_role="front_office",
+            operation="appointment_request_translation",
+        )
+        req.refresh_from_db()
+        self.assertEqual(req.reason, "Necesito una cita.")
+        self.assertEqual(req.preferred_times, "Por las mañanas")
+        self.assertEqual(req.insurance_other, "Seguro Salud")
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action=AuditLog.Action.TRANSLATE_APPOINTMENT_REQUEST,
+                object_id=str(req.pk),
+            ).exists()
+        )
+
+    @mock.patch("frontdesk.views.gemini.translate_text_batch", return_value=["Necesito una cita."])
+    def test_patient_role_cannot_use_request_translation(self, translate_text_batch):
+        req = self.new_request()
+        self.client.force_login(make_user("patient"))
+
+        response = self.client.post(reverse("frontdesk:translate_request", args=[req.pk]))
+
+        self.assertEqual(response.status_code, 403)
+        translate_text_batch.assert_not_called()
+
+    @mock.patch("frontdesk.views.gemini.translate_text_batch", return_value=["I need an appointment."])
+    def test_another_front_office_user_can_translate_request(self, translate_text_batch):
+        req = self.new_request(reason="Necesito una cita.")
+        self.client.force_login(make_user("front_office"))
+
+        response = self.client.post(reverse("frontdesk:translate_request", args=[req.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        translate_text_batch.assert_called_once()
+
+    @mock.patch(
+        "frontdesk.views.gemini.translate_text_batch",
+        side_effect=gemini.GeminiError("unavailable"),
+    )
+    def test_request_translation_failure_preserves_request(self, translate_text_batch):
+        req = self.new_request(reason="Necesito una cita.")
+
+        response = self.client.post(
+            reverse("frontdesk:translate_request", args=[req.pk]),
+            follow=True,
+        )
+
+        self.assertContains(response, "translation service is unavailable")
+        req.refresh_from_db()
+        self.assertEqual(req.reason, "Necesito una cita.")
 
 
 class RequestActionTests(FrontDeskTestCase):
@@ -283,6 +355,98 @@ class FrontDeskMessageTests(FrontDeskTestCase):
         closed = make_thread(patient=self.patient, category="billing", status=MessageThread.Status.CLOSED)
         response = self.client.get(reverse("frontdesk:messages") + "?status=closed")
         self.assertEqual(list(response.context["page"]), [closed])
+
+    @mock.patch("frontdesk.views.gemini.translate_to_english", return_value="Hello, I need to reschedule.")
+    def test_patient_message_can_be_translated_without_changing_original(self, generate_text):
+        thread = make_thread(patient=self.patient, category="billing")
+        message = Message.objects.create(
+            thread=thread,
+            sender_name="Mike Anderson",
+            from_patient=True,
+            body="Hola, necesito cambiar mi cita.",
+        )
+
+        response = self.client.post(
+            reverse("frontdesk:translate_message", args=[thread.pk, message.pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Translate with AI")
+        self.assertContains(response, "AI-generated English translation")
+        self.assertContains(response, "Hello, I need to reschedule.")
+        generate_text.assert_called_once()
+        message.refresh_from_db()
+        self.assertEqual(message.body, "Hola, necesito cambiar mi cita.")
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action=AuditLog.Action.TRANSLATE_MESSAGE,
+                patient=self.patient,
+                object_id=str(message.pk),
+            ).exists()
+        )
+
+    def test_only_patient_messages_in_front_office_threads_can_be_translated(self):
+        thread = make_thread(patient=self.patient, category="billing")
+        staff_message = Message.objects.create(
+            thread=thread,
+            sender_name="Brit Hale",
+            from_patient=False,
+            body="We can help with that.",
+        )
+        clinical_thread = make_thread(patient=self.patient, category="clinical")
+        clinical_message = Message.objects.create(
+            thread=clinical_thread,
+            sender_name="Mike Anderson",
+            from_patient=True,
+            body="Hola.",
+        )
+
+        staff_response = self.client.post(
+            reverse("frontdesk:translate_message", args=[thread.pk, staff_message.pk])
+        )
+        clinical_response = self.client.post(
+            reverse("frontdesk:translate_message", args=[clinical_thread.pk, clinical_message.pk])
+        )
+
+        self.assertEqual(staff_response.status_code, 404)
+        self.assertEqual(clinical_response.status_code, 404)
+
+    @mock.patch("frontdesk.views.gemini.translate_to_english", return_value="Hello.")
+    def test_patient_cannot_access_translation_endpoint(self, generate_text):
+        thread = make_thread(patient=self.patient, category="billing")
+        message = Message.objects.create(
+            thread=thread,
+            sender_name="Mike Anderson",
+            from_patient=True,
+            body="Hola.",
+        )
+        self.client.force_login(make_user("patient"))
+
+        response = self.client.post(
+            reverse("frontdesk:translate_message", args=[thread.pk, message.pk])
+        )
+
+        self.assertEqual(response.status_code, 403)
+        generate_text.assert_not_called()
+
+    @mock.patch("frontdesk.views.gemini.translate_to_english", side_effect=gemini.GeminiError("unavailable"))
+    def test_translation_failure_keeps_original_and_shows_error(self, generate_text):
+        thread = make_thread(patient=self.patient, category="billing")
+        message = Message.objects.create(
+            thread=thread,
+            sender_name="Mike Anderson",
+            from_patient=True,
+            body="Hola.",
+        )
+
+        response = self.client.post(
+            reverse("frontdesk:translate_message", args=[thread.pk, message.pk]),
+            follow=True,
+        )
+
+        self.assertContains(response, "translation service is unavailable")
+        message.refresh_from_db()
+        self.assertEqual(message.body, "Hola.")
 
 
 class PatientLookupTests(FrontDeskTestCase):
