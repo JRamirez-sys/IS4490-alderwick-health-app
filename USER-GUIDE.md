@@ -58,6 +58,7 @@ Patients can only ever see their own records.
 - View each location's daily schedule and check patients in, mark no-shows, or cancel
 - Answer front-office patient messages
 - Look up patients and book appointments by phone
+- Use the staff policy assistant to ask about published practice policies or draft a response for review
 
 Front-office staff see demographics, insurance, and appointments, but **not** clinical records.
 
@@ -67,8 +68,18 @@ Front-office staff see demographics, insurance, and appointments, but **not** cl
 - Open the charts of patients they have a care relationship with (primary care patients, and anyone they have seen or scheduled)
 - Write, save, and sign visit notes. Signing locks the note and releases the after-visit summary to the patient portal.
 - Answer clinical messages assigned to them
+- Use the staff policy assistant to ask about published practice policies or draft a response for review
 
 Doctors cannot open charts of patients outside their care relationships. Every attempt is recorded in the audit log.
+
+### Staff policy assistant
+
+- Front-office employees and doctors can open the **Policy assistant** from their staff workspace.
+- After staff sign in, a one-time notice links to the assistant and briefly explains what it can do.
+- Ask questions grounded in published policy documents, or switch to draft mode for an editable response suggestion. Policy references link to the source documents.
+- The assistant does not access patient charts, send messages, schedule visits, or make clinical decisions. Staff must review every draft before using it.
+- Do not enter real patient information, identifiers, or clinical details. Conversations stay in the current page and are not saved; AI operation metadata is recorded without prompts or replies.
+- Answers can be incomplete or incorrect. Check the linked policy or ask a supervisor when the assistant cannot find a definitive answer.
 
 ### AI engineers
 

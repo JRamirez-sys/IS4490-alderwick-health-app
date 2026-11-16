@@ -2,7 +2,24 @@
 {% block title %}Front Office | Alderwick{% endblock %}
 {% block content %}
 <div class="page-header"><div><h1>Good {% now "A" as ampm %}{% if ampm == "AM" %}morning{% else %}afternoon{% endif %}, {{ user.first_name }}</h1><p>{{ office.name|default:"All locations" }} &middot; {{ today|date:"l, F j" }}</p></div>
-  <form class="toolbar" method="get" action="{% url 'frontdesk:patient_search' %}"><label class="sr-only" for="dq">Find a patient</label><input class="input" id="dq" name="q" placeholder="Name, MRN, DOB, or phone"><button class="btn btn-secondary" type="submit">Find patient</button></form></div>
+  <div class="toolbar dashboard-toolbar">
+    <form class="toolbar dashboard-search" method="get" action="{% url 'frontdesk:patient_search' %}">
+      <label class="sr-only" for="dq">Find a patient</label>
+      <input class="input" id="dq" name="q" placeholder="Name, MRN, DOB, or phone">
+      <button class="btn btn-secondary" type="submit">
+        <svg class="search-icon" aria-hidden="true" viewBox="0 0 20 20" fill="none">
+          <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.8"></circle>
+          <path d="m13 13 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+        </svg>
+        Find patient
+      </button>
+    </form>
+    <a class="btn btn-secondary assistant-link" href="{% url 'clinic:staff_assistant' %}">
+      <span class="ai-nav-content">{% include "includes/ai_sparkle.html" %}Policy assistant</span>
+      <span class="ai-badge">AI</span>
+    </a>
+  </div>
+</div>
 <div class="grid grid-4" style="margin-bottom:18px">
   <a class="card card-link stat stat-warn" href="{% url 'frontdesk:requests' %}?status=submitted"><div class="label">New requests</div><div class="value">{{ counts.new_requests }}</div><div class="hint">{{ counts.under_review }} under review</div></a>
   <a class="card card-link stat stat-warn" href="{% url 'frontdesk:messages' %}"><div class="label">Unread messages</div><div class="value">{{ counts.unread_messages }}</div><div class="hint">Front office queue</div></a>

@@ -6,7 +6,7 @@ from django.urls import reverse
 from accounts.decorators import role_required
 from accounts.models import User
 from audit.models import AuditLog
-from clinic.testing import PASSWORD, make_user
+from clinic.testing import PASSWORD, make_patient, make_provider, make_user
 
 
 class UserModelTests(TestCase):
@@ -63,6 +63,36 @@ class SignInTests(TestCase):
                 home = self.client.get(reverse("accounts:home"))
                 self.assertRedirects(home, reverse(url_name), fetch_redirect_response=False)
                 self.client.logout()
+
+    def test_staff_login_shows_policy_assistant_intro_once(self):
+        for role, destination in [
+            (User.Role.FRONT_OFFICE, "frontdesk:dashboard"),
+            (User.Role.DOCTOR, "clinician:dashboard"),
+        ]:
+            with self.subTest(role=role):
+                user = make_provider().user if role == User.Role.DOCTOR else make_user(role)
+                self.client.post(
+                    reverse("accounts:login"), {"username": user.username, "password": PASSWORD}
+                )
+                self.client.get(reverse("accounts:home"))
+                workspace = self.client.get(reverse(destination))
+
+                self.assertContains(workspace, "New: Policy assistant.")
+                self.assertContains(workspace, "published practice policies")
+                self.assertContains(workspace, reverse("clinic:staff_assistant"))
+
+                next_page = self.client.get(reverse(destination))
+                self.assertNotContains(next_page, "New: Policy assistant.")
+                self.client.logout()
+
+    def test_patient_login_does_not_show_staff_assistant_intro(self):
+        user = make_patient().user
+        self.client.post(reverse("accounts:login"), {"username": user.username, "password": PASSWORD})
+        self.client.get(reverse("accounts:home"))
+
+        response = self.client.get(reverse("portal:dashboard"))
+
+        self.assertNotContains(response, "New: Policy assistant.")
 
     def test_bad_password_shows_error(self):
         user = make_user(User.Role.PATIENT)
