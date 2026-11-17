@@ -15,6 +15,7 @@ class AuditLog(models.Model):
         LOGIN_FAILED = "login_failed", "Failed sign-in"
         ACCESS_DENIED = "access_denied", "Access denied"
         VIEW_CHART = "view_chart", "Viewed patient chart"
+        SEARCH_ALLERGY_RECORDS = "search_allergy_records", "Searched patient allergy records"
         VIEW_PATIENT_PROFILE = "view_patient_profile", "Viewed patient profile"
         VIEW_OWN_RECORD = "view_own_record", "Patient viewed own record"
         VIEW_VISIT = "view_visit", "Viewed visit note"

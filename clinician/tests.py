@@ -66,6 +66,35 @@ class DashboardAndScheduleTests(ClinicianTestCase):
         self.assertEqual(context["awaiting_count"], 1)
         self.assertEqual(len(context["abnormal_labs"]), 1)
 
+    @mock.patch(
+        "clinician.views.get_operations_tasks",
+        return_value=[
+            {
+                "key": "unsigned_notes",
+                "label": "Unsigned notes",
+                "count": 1,
+                "over_24h": 1,
+                "oldest_age_hours": 72,
+            }
+        ],
+    )
+    @mock.patch(
+        "clinician.views.prioritize_operations_tasks",
+        side_effect=lambda tasks, role: tasks,
+    )
+    def test_dashboard_generates_operations_brief_for_current_provider(self, prioritize, get_tasks):
+        response = self.client.post(
+            reverse("clinician:dashboard"),
+            {"action": "generate_operations_brief"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["operations_brief"][0]["url"], "#notes")
+        self.assertContains(response, "AI-prioritized")
+        self.assertContains(response, "data-close-operations-brief")
+        get_tasks.assert_called_once_with(self.provider.user.role, provider=self.provider)
+        prioritize.assert_called_once()
+
     def test_schedule_by_date(self):
         day = tomorrow()
         appointment = make_appointment(patient=self.patient, provider=self.provider, start=local_dt(day, 9))

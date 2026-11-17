@@ -1,0 +1,59 @@
+<section class="card operations-brief">
+  <div class="operations-brief-intro">
+    <div>
+      <p class="operations-brief-kicker">Daily priorities</p>
+      <h2>Operations brief <span class="ai-badge">AI</span></h2>
+      <p class="operations-brief-description">{{ operations_brief_description }}</p>
+    </div>
+    <form method="post" class="operations-brief-form">
+      {% csrf_token %}
+      <button class="btn btn-accent" type="submit" name="action" value="generate_operations_brief" data-generate-operations-brief>Generate today's brief</button>
+    </form>
+  </div>
+  {% if operations_brief != None %}
+  <section class="operations-brief-result" id="daily-operations-brief-result" aria-live="polite">
+    <div class="operations-brief-result-header">
+      <div>
+        <span class="badge {% if operations_brief_ai_prioritized %}badge-success{% else %}badge-info{% endif %}">
+          {% if operations_brief_ai_prioritized %}AI-prioritized{% else %}Queue snapshot{% endif %}
+        </span>
+        <p class="operations-brief-result-caption">
+          {% if operations_brief_ai_prioritized %}Suggested focus based on queue size and age.{% else %}Current workload; no AI ranking was applied.{% endif %}
+        </p>
+      </div>
+      <button class="btn-link operations-brief-close" type="button" aria-label="Close daily operations brief" data-close-operations-brief>
+        <span aria-hidden="true">&times;</span> Close
+      </button>
+    </div>
+    {% if operations_brief_error %}<p class="alert alert-warning" role="status">{{ operations_brief_error }}</p>{% endif %}
+    {% if operations_brief %}
+    <div class="operations-brief-grid">
+      {% for item in operations_brief %}
+      <article class="operations-brief-item">
+        <div class="operations-brief-item-heading">
+          {% if operations_brief_ai_prioritized %}
+          <span class="operations-brief-rank" aria-label="Priority {{ forloop.counter }}">{{ forloop.counter }}</span>
+          {% endif %}
+          <h3><a href="{{ item.url }}">{{ item.label }}</a></h3>
+        </div>
+        <div class="operations-brief-count"><strong>{{ item.count }}</strong><span>items</span></div>
+        <div class="operations-brief-details">
+          {% if item.key == "appointment_requests" %}
+          <span>{{ item.new_count }} new</span>
+          <span>{{ item.under_review_count }} under review</span>
+          {% elif item.unread_count != None %}
+          <span>{{ item.unread_count }} unread</span>
+          {% endif %}
+          <span>{{ item.over_24h }} over 24 hours</span>
+          <span>Oldest: {{ item.oldest_age_hours }}h</span>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="operations-brief-empty" role="status">{{ operations_brief_empty_message }}</p>
+    {% endif %}
+    <p class="operations-brief-note">Review each queue before taking action.</p>
+  </section>
+  {% endif %}
+</section>

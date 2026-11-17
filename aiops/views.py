@@ -1,5 +1,8 @@
 from django.contrib import messages
+from datetime import timedelta
+
 from django.db import transaction
+from django.db.models import Count, Max, Q, Sum
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -14,6 +17,179 @@ from .forms import AIConfigurationDraftForm
 from .models import AIConfiguration, AIOperation
 
 ai_engineer_required = role_required(User.Role.AI_ENGINEER)
+AI_AGENT_ANALYTICS_DAYS = 30
+AI_AGENT_CATALOG = (
+    {
+        "slug": "staff-policy-assistant",
+        "name": "Staff policy assistant",
+        "description": "Answers policy questions and drafts staff replies from published practice policies.",
+        "operation_codes": (AIOperation.Operation.STAFF_POLICY_ASSISTANT,),
+        "tools": (
+            {
+                "name": "Published policy retrieval",
+                "description": "Loads published policy documents from the practice library for the current request.",
+            },
+            {
+                "name": "Gemini text generation",
+                "description": "Answers policy questions or drafts text; it cannot send messages or change records.",
+            },
+        ),
+        "data_access": "Published policies and the submitted conversation; no patient-chart retrieval.",
+    },
+    {
+        "slug": "daily-operations-brief",
+        "name": "Daily operations brief",
+        "description": "Prioritizes staff work queues by aggregate task counts and age.",
+        "operation_codes": (AIOperation.Operation.DAILY_OPERATIONS_BRIEF,),
+        "tools": (
+            {
+                "name": "Role-scoped queue aggregation",
+                "description": "Reads queue status and age counts; does not send task, note, or message contents.",
+            },
+            {
+                "name": "Gemini text generation",
+                "description": "Ranks the supplied aggregate queues; it cannot modify or complete tasks.",
+            },
+        ),
+        "data_access": "Aggregate queue counts and ages only; no patient names or clinical content.",
+    },
+    {
+        "slug": "medicine-lookup",
+        "name": "Medicine lookup",
+        "description": "Summarizes general medicine information with web-grounded public-source citations.",
+        "operation_codes": (AIOperation.Operation.MEDICINE_LOOKUP,),
+        "tools": (
+            {
+                "name": "Google Search grounding",
+                "description": "Searches public web sources and returns grounding metadata for citations.",
+            },
+            {
+                "name": "Citation domain filter",
+                "description": "Displays HTTPS citations only from FDA, DailyMed, MedlinePlus, or NIH domains.",
+            },
+            {
+                "name": "Authorized patient allergy match",
+                "description": "Performs an exact local allergy-name match only within a doctor's authorized patient panel.",
+            },
+        ),
+        "data_access": "Web search receives the medicine name only. The optional allergy check is clinician-only, read-only, audited, and never sends patient data to Gemini.",
+    },
+    {
+        "slug": "translation",
+        "name": "Translation assistant",
+        "description": "Translates messages, appointment requests, and patient-portal page text.",
+        "operation_codes": (
+            AIOperation.Operation.MESSAGE_TRANSLATION,
+            AIOperation.Operation.APPOINTMENT_REQUEST_TRANSLATION,
+            AIOperation.Operation.PORTAL_PAGE_TRANSLATION,
+        ),
+        "tools": (
+            {
+                "name": "Gemini text generation",
+                "description": "Translates the selected message, request, or page text into an enabled language.",
+            },
+            {
+                "name": "Published translation settings",
+                "description": "Applies the enabled-language list and approved model configuration.",
+            },
+        ),
+        "data_access": "Receives the text selected for translation; portal page text may include patient-specific content. No web-search or chart-search tool.",
+    },
+)
+
+
+def _agent_usage_metrics(operation_codes, operation_metrics):
+    metrics = [operation_metrics[code] for code in operation_codes if code in operation_metrics]
+    calls = sum(item["calls"] for item in metrics)
+    failures = sum(item["failures"] for item in metrics)
+    duration_total = sum(item["duration_total"] for item in metrics)
+    last_used_values = [item["last_used"] for item in metrics if item["last_used"]]
+    return {
+        "calls": calls,
+        "failures": failures,
+        "success_rate": round((calls - failures) * 100 / calls, 1) if calls else None,
+        "average_duration_ms": round(duration_total / calls) if calls else None,
+        "last_used": max(last_used_values) if last_used_values else None,
+    }
+
+
+def _ai_agent_analytics():
+    period_start = timezone.now() - timedelta(days=AI_AGENT_ANALYTICS_DAYS)
+    recent_operations = AIOperation.objects.filter(created_at__gte=period_start)
+    allergy_searches = AuditLog.objects.filter(
+        action=AuditLog.Action.SEARCH_ALLERGY_RECORDS,
+        timestamp__gte=period_start,
+    )
+    allergy_summary = allergy_searches.aggregate(
+        checks=Count("id"),
+        checks_with_matches=Count("id", filter=Q(details__matches_found=True)),
+    )
+    allergy_checks = allergy_summary["checks"]
+    summary = recent_operations.aggregate(
+        calls=Count("id"),
+        failures=Count("id", filter=Q(status=AIOperation.Status.FAILED)),
+        duration_total=Sum("duration_ms"),
+    )
+    operation_metrics = {
+        item["operation"]: item
+        for item in recent_operations.values("operation").annotate(
+            calls=Count("id"),
+            failures=Count("id", filter=Q(status=AIOperation.Status.FAILED)),
+            duration_total=Sum("duration_ms"),
+            last_used=Max("created_at"),
+        )
+    }
+
+    agents = []
+    mapped_operations = set()
+    for agent in AI_AGENT_CATALOG:
+        mapped_operations.update(agent["operation_codes"])
+        agents.append({**agent, **_agent_usage_metrics(agent["operation_codes"], operation_metrics)})
+
+    other_operations = tuple(
+        operation
+        for operation, _ in AIOperation.Operation.choices
+        if operation not in mapped_operations and operation in operation_metrics
+    )
+    if other_operations:
+        agents.append(
+            {
+                "slug": "other-ai-operations",
+                "name": "Other AI operations",
+                "description": "Logged model calls not associated with a named staff-facing agent.",
+                "tools": (
+                    {
+                        "name": "Gemini text generation",
+                        "description": "Uses the shared Gemini text-generation helper.",
+                    },
+                ),
+                "data_access": "Varies by caller; prompts and responses are not stored in operation logs.",
+                "operation_labels": ", ".join(
+                    label for code, label in AIOperation.Operation.choices if code in other_operations
+                ),
+                **_agent_usage_metrics(other_operations, operation_metrics),
+            }
+        )
+
+    calls = summary["calls"]
+    failures = summary["failures"]
+    return {
+        "period_start": period_start,
+        "calls": calls,
+        "failures": failures,
+        "success_rate": round((calls - failures) * 100 / calls, 1) if calls else None,
+        "average_duration_ms": round(summary["duration_total"] / calls) if calls else None,
+        "allergy_tool_analytics": {
+            "checks": allergy_checks,
+            "checks_with_matches": allergy_summary["checks_with_matches"],
+            "match_rate": (
+                round(allergy_summary["checks_with_matches"] * 100 / allergy_checks, 1)
+                if allergy_checks
+                else None
+            ),
+        },
+        "agents": agents,
+    }
 
 
 def _configuration_form(configuration):
@@ -52,11 +228,13 @@ def index(request):
         pk=1,
         defaults={"selected_model": gemini.model_name()},
     )
+    analytics = _ai_agent_analytics()
     operations = AIOperation.objects.all()[:100]
     context = {
         "operations": operations,
         "total_operations": AIOperation.objects.count(),
         "failed_operations": AIOperation.objects.filter(status=AIOperation.Status.FAILED).count(),
+        "agent_analytics": analytics,
         "configuration": configuration,
         "active_model": configuration.selected_model or gemini.model_name(),
         "settings_form": _configuration_form(configuration),

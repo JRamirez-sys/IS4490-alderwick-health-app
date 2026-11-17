@@ -135,24 +135,27 @@ def _record_operation(
     )
 
 
-def generate_text(
+def _generate_content(
     prompt,
     *,
     system_instruction=None,
     model=None,
     response_mime_type=None,
+    tools=None,
     operation="text_generation",
     actor_role="",
     target_language="",
     input_count=1,
 ):
-    """Send a text prompt to Gemini and return the reply as a string."""
+    """Send a prompt to Gemini and return its complete response."""
     model = model or model_name()
     config_values = {}
     if system_instruction:
         config_values["system_instruction"] = system_instruction
     if response_mime_type:
         config_values["response_mime_type"] = response_mime_type
+    if tools is not None:
+        config_values["tools"] = tools
     config = types.GenerateContentConfig(**config_values) if config_values else None
     started = time.monotonic()
     try:
@@ -196,7 +199,53 @@ def generate_text(
         duration_ms=duration_ms,
     )
     logger.info("gemini_call model=%s duration_ms=%s", model, duration_ms)
+    return response
+
+
+def generate_text(
+    prompt,
+    *,
+    system_instruction=None,
+    model=None,
+    response_mime_type=None,
+    operation="text_generation",
+    actor_role="",
+    target_language="",
+    input_count=1,
+):
+    """Send a text prompt to Gemini and return the reply as a string."""
+    response = _generate_content(
+        prompt,
+        system_instruction=system_instruction,
+        model=model,
+        response_mime_type=response_mime_type,
+        operation=operation,
+        actor_role=actor_role,
+        target_language=target_language,
+        input_count=input_count,
+    )
     return response.text or ""
+
+
+def generate_with_google_search(
+    prompt,
+    *,
+    system_instruction=None,
+    model=None,
+    operation="text_generation",
+    actor_role="",
+    input_count=1,
+):
+    """Send a prompt with Google Search grounding and return citation metadata."""
+    return _generate_content(
+        prompt,
+        system_instruction=system_instruction,
+        model=model,
+        tools=[types.Tool(google_search=types.GoogleSearch())],
+        operation=operation,
+        actor_role=actor_role,
+        input_count=input_count,
+    )
 
 
 def translate_to_language(text, target_language, *, actor_role=""):

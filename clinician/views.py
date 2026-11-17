@@ -3,16 +3,18 @@ import datetime
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.db.models import Q
-from django.http import Http404
+from django.http import Http404, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_http_methods, require_POST
 
 from accounts.decorators import role_required
 from accounts.models import User
 from audit.models import AuditLog
 from audit.utils import log_event
 from clinic import gemini
+from clinic.operations_brief import get_operations_tasks, prioritize_operations_tasks
 from clinic.models import Appointment, LabResult, Message, MessageThread, Patient, Provider, Visit
 from clinic.services import patients_for_provider, provider_can_view_patient, reply_to_thread
 
@@ -41,8 +43,29 @@ def _day_bounds(day):
 
 
 @doctor_required
+@require_http_methods(["GET", "POST"])
 def dashboard(request):
     provider = current_provider(request)
+    operations_brief = None
+    operations_brief_error = ""
+    if request.method == "POST":
+        if request.POST.get("action") != "generate_operations_brief":
+            return HttpResponseBadRequest("Unsupported dashboard action.")
+        operations_brief = get_operations_tasks(request.user.role, provider=provider)
+        try:
+            operations_brief = prioritize_operations_tasks(operations_brief, request.user.role)
+            operations_brief_ai_prioritized = True
+        except gemini.GeminiError:
+            operations_brief_ai_prioritized = False
+            operations_brief_error = (
+                "AI prioritization is unavailable. Showing current queue counts without AI ranking."
+            )
+        for item in operations_brief:
+            item["url"] = {
+                "unsigned_notes": "#notes",
+                "clinical_replies": reverse("clinician:inbox") + "?status=open",
+            }[item["key"]]
+
     today = timezone.localdate()
     start, end = _day_bounds(today)
     todays = (
@@ -76,6 +99,11 @@ def dashboard(request):
         "abnormal_labs": abnormal_labs,
         "panel_size": my_patients.count(),
         "now": timezone.now(),
+        "operations_brief": operations_brief,
+        "operations_brief_error": operations_brief_error,
+        "operations_brief_ai_prioritized": (
+            operations_brief_ai_prioritized if request.method == "POST" else False
+        ),
     }
     return render(request, "clinician/dashboard.html", context)
 

@@ -10,7 +10,7 @@ The application serves four types of users:
 | Patients and visitors | Public site and patient portal | Find providers, request appointments, view records, send and translate messages |
 | Front office | `/staff/front-office/` | Work the request queue, translate patient-entered request text and messages, schedule, check patients in, and answer administrative messages |
 | Doctors | `/staff/clinician/` | Review schedules and charts, write and sign notes, answer and translate clinical messages |
-| AI engineers | `/staff/ai-operations/` | Monitor AI operations and draft/publish translation settings |
+| AI engineers | `/staff/ai-operations/` | Review AI agents, tool access, and usage analytics; monitor operations and manage translation settings |
 
 Sign-in details for every account are in **[USER-GUIDE.md](USER-GUIDE.md)**.
 
@@ -49,7 +49,7 @@ Then open http://127.0.0.1:8000/.
 
 ## Connecting to Gemini
 
-All calls to Google's Gemini models go through [clinic/gemini.py](clinic/gemini.py). Its docstring has a usage example, so build new AI features on `gemini.generate_text()` instead of creating a separate client.
+All calls to Google's Gemini models go through [clinic/gemini.py](clinic/gemini.py). Use its helpers instead of creating a separate client; web-grounded features can use `gemini.generate_with_google_search()` to access Google Search grounding and citation metadata.
 
 1. Get an API key from [Google AI Studio](https://aistudio.google.com/apikey) or your GCP project.
 2. Add it as a Codespaces secret named `GEMINI_API_KEY`: on GitHub, **Settings → Codespaces → Secrets → New secret**, and give it access to this repository. (If you create the Codespace afterwards, GitHub will also prompt you for it.)
@@ -65,6 +65,8 @@ Optional environment variables:
 | `GOOGLE_GENAI_USE_VERTEXAI` | Which endpoint the key is sent to. The Codespace sets it to `true`, which sends requests to Vertex AI (`aiplatform.googleapis.com`), as GCP project keys need. With an AI Studio key, set it to `false`, which sends requests to `generativelanguage.googleapis.com`. Using the wrong endpoint for your key fails with `403 API_KEY_SERVICE_BLOCKED`. |
 
 On your own computer, run `export GEMINI_API_KEY=...` before `runserver`. The `/dev/gemini/` page is not linked from the application and returns 404 when `DJANGO_DEBUG=0`. Send synthetic text only, never real patient information.
+
+The staff **Medicine lookup** uses Google Search grounding and requires a configured Gemini key and a model that supports Google Search. It sends only the medicine name entered by staff, displays citations from trusted public domains, and does not access patient records. Search-grounding availability and pricing depend on your Google AI/Vertex AI account.
 
 ## Demo data
 

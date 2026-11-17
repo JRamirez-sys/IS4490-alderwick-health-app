@@ -1,0 +1,13 @@
+{% extends "frontdesk/base.html" %}
+{% load static %}
+{% block title %}Operations brief | Alderwick{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Front-office priorities</h1>
+    <p>Review new requests, patient replies, and aging work in one place.</p>
+  </div>
+</div>
+{% include "clinic/includes/daily_operations_brief.html" with operations_brief_description="A quick look at open appointment requests and patient messages needing a reply." operations_brief_empty_message="No open requests or patient messages need a reply." %}
+<script src="{% static 'js/daily_operations_brief.js' %}" defer></script>
+{% endblock %}

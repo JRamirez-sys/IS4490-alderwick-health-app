@@ -4,11 +4,13 @@
 {% with name=request.resolver_match.url_name %}
 <div class="nav-label">Front office</div>
 <a class="nav-item {% if name == 'dashboard' %}active{% endif %}" href="{% url 'frontdesk:dashboard' %}">Dashboard</a>
+<a class="nav-item {% if name == 'operations_brief' %}active{% endif %}" href="{% url 'frontdesk:operations_brief' %}">Operations brief <span class="ai-badge">AI</span></a>
 <a class="nav-item {% if name == 'requests' or name == 'request_detail' %}active{% endif %}" href="{% url 'frontdesk:requests' %}">Appointment requests</a>
 <a class="nav-item {% if name == 'schedule' %}active{% endif %}" href="{% url 'frontdesk:schedule' %}">Schedule</a>
 <a class="nav-item {% if name == 'messages' or name == 'thread' %}active{% endif %}" href="{% url 'frontdesk:messages' %}">Patient messages</a>
 <a class="nav-item {% if 'patient' in name or name == 'book_for_patient' %}active{% endif %}" href="{% url 'frontdesk:patient_search' %}">Patient lookup</a>
 <a class="nav-item {% if name == 'staff_assistant' or name == 'staff_assistant_chat' %}active{% endif %}" href="{% url 'clinic:staff_assistant' %}"><span class="ai-nav-content">{% include "includes/ai_sparkle.html" %}Policy assistant</span><span class="ai-badge">AI</span></a>
+<a class="nav-item {% if name == 'medicine_lookup' or name == 'medicine_lookup_search' %}active{% endif %}" href="{% url 'clinic:medicine_lookup' %}"><span class="ai-nav-content">{% include "includes/ai_sparkle.html" %}Medicine lookup</span><span class="ai-badge">AI</span></a>
 <div class="nav-label">Practice</div>
 <a class="nav-item" href="{% url 'public:resource_list' %}" target="_blank" rel="noopener">Policies and FAQ</a>
 <a class="nav-item" href="{% url 'public:provider_list' %}" target="_blank" rel="noopener">Provider directory</a>

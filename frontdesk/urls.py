@@ -6,6 +6,7 @@ app_name = "frontdesk"
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
+    path("operations-brief/", views.operations_brief, name="operations_brief"),
     path("requests/", views.request_list, name="requests"),
     path("requests/<int:pk>/", views.request_detail, name="request_detail"),
     path("requests/<int:pk>/translate/", views.translate_request, name="translate_request"),

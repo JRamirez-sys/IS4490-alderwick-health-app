@@ -61,13 +61,15 @@ class FrontDeskAccessTests(FrontDeskTestCase):
             with self.subTest(role=role):
                 self.client.force_login(make_user(role))
                 self.assertEqual(self.client.get(reverse("frontdesk:dashboard")).status_code, 403)
+                self.assertEqual(self.client.get(reverse("frontdesk:operations_brief")).status_code, 403)
 
     def test_anonymous_redirected(self):
         self.client.logout()
         self.assertEqual(self.client.get(reverse("frontdesk:dashboard")).status_code, 302)
+        self.assertEqual(self.client.get(reverse("frontdesk:operations_brief")).status_code, 302)
 
     def test_pages_render(self):
-        for name in ("dashboard", "requests", "schedule", "messages", "patient_search"):
+        for name in ("dashboard", "operations_brief", "requests", "schedule", "messages", "patient_search"):
             with self.subTest(page=name):
                 self.assertEqual(self.client.get(reverse(f"frontdesk:{name}")).status_code, 200)
 
@@ -85,6 +87,71 @@ class DashboardTests(FrontDeskTestCase):
         self.assertEqual(counts["unread_messages"], 1)
         self.assertEqual(counts["todays_appointments"], 1)
         self.assertEqual(counts["checked_in"], 1)
+
+    def test_dashboard_links_to_separate_operations_brief(self):
+        response = self.client.get(reverse("frontdesk:dashboard"))
+
+        self.assertContains(response, reverse("frontdesk:operations_brief"))
+        self.assertNotContains(response, 'data-generate-operations-brief')
+
+    @mock.patch(
+        "frontdesk.views.get_operations_tasks",
+        return_value=[
+            {
+                "key": "appointment_requests",
+                "label": "Open appointment requests",
+                "count": 2,
+                "over_24h": 1,
+                "oldest_age_hours": 36,
+            }
+        ],
+    )
+    @mock.patch(
+        "frontdesk.views.prioritize_operations_tasks",
+        side_effect=lambda tasks, role: tasks,
+    )
+    def test_operations_brief_generates_and_links_task_queues(self, prioritize, get_tasks):
+        response = self.client.post(
+            reverse("frontdesk:operations_brief"),
+            {"action": "generate_operations_brief"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["operations_brief"][0]["url"], reverse("frontdesk:requests") + "?status=open")
+        self.assertContains(response, "AI-prioritized")
+        self.assertContains(response, "data-close-operations-brief")
+        get_tasks.assert_called_once_with(self.staff.role)
+        prioritize.assert_called_once()
+
+    def test_operations_brief_tab_is_active_and_close_is_not_shown_until_generated(self):
+        response = self.client.get(reverse("frontdesk:operations_brief"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "class=\"nav-item active\" href=\"/staff/front-office/operations-brief/\"")
+        self.assertContains(response, "data-generate-operations-brief")
+        self.assertNotContains(response, "data-close-operations-brief")
+
+    @mock.patch(
+        "frontdesk.views.prioritize_operations_tasks",
+        side_effect=gemini.GeminiError("Gemini is not configured."),
+    )
+    def test_operations_brief_shows_counts_if_ai_prioritization_is_unavailable(self, prioritize):
+        self.new_request()
+        make_thread(patient=self.patient, category=MessageThread.Category.APPOINTMENTS)
+
+        response = self.client.post(
+            reverse("frontdesk:operations_brief"),
+            {"action": "generate_operations_brief"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Queue snapshot")
+        self.assertContains(response, "data-close-operations-brief")
+        self.assertContains(response, "1 new")
+        self.assertContains(response, "0 under review")
+        self.assertContains(response, "1 unread")
+        self.assertContains(response, "AI prioritization is unavailable")
+        prioritize.assert_called_once()
 
 
 class RequestQueueTests(FrontDeskTestCase):

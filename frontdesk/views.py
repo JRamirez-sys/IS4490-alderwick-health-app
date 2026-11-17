@@ -3,16 +3,19 @@ import datetime
 from django.contrib import messages
 from django.core.paginator import Paginator
 from django.db.models import Q
+from django.http import HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import dateformat, timezone
 from django.utils.http import url_has_allowed_host_and_scheme
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_http_methods, require_POST
 
 from accounts.decorators import role_required
 from accounts.models import User
 from audit.models import AuditLog
 from audit.utils import log_event
 from clinic import gemini
+from clinic.operations_brief import get_operations_tasks, prioritize_operations_tasks
 from clinic.models import (
     Appointment,
     AppointmentRequest,
@@ -62,6 +65,38 @@ def dashboard(request):
         "recent_threads": threads.select_related("patient")[:6],
     }
     return render(request, "frontdesk/dashboard.html", context)
+
+
+@front_office_required
+@require_http_methods(["GET", "POST"])
+def operations_brief(request):
+    brief = None
+    brief_error = ""
+    ai_prioritized = False
+    if request.method == "POST":
+        if request.POST.get("action") != "generate_operations_brief":
+            return HttpResponseBadRequest("Unsupported brief action.")
+        brief = get_operations_tasks(request.user.role)
+        try:
+            brief = prioritize_operations_tasks(brief, request.user.role)
+            ai_prioritized = bool(brief)
+        except gemini.GeminiError:
+            brief_error = "AI prioritization is unavailable. Showing current queue counts without AI ranking."
+        for item in brief:
+            item["url"] = {
+                "appointment_requests": f'{reverse("frontdesk:requests")}?status=open',
+                "front_office_replies": reverse("frontdesk:messages"),
+            }[item["key"]]
+
+    return render(
+        request,
+        "frontdesk/operations_brief.html",
+        {
+            "operations_brief": brief,
+            "operations_brief_error": brief_error,
+            "operations_brief_ai_prioritized": ai_prioritized,
+        },
+    )
 
 
 @front_office_required

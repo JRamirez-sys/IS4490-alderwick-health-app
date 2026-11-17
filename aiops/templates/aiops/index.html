@@ -8,9 +8,96 @@
 {% block content %}
 <div class="page-header"><div><h1>AI operations dashboard</h1><p>Monitoring for Alderwick's AI assistants.</p></div></div>
 <div class="grid grid-2" style="margin-bottom:18px">
-  <div class="card stat"><div class="label">AI operations recorded</div><div class="value">{{ total_operations }}</div></div>
-  <div class="card stat stat-warn"><div class="label">Failed model calls</div><div class="value">{{ failed_operations }}</div></div>
+  <div class="card stat"><div class="label">AI operations recorded (all time)</div><div class="value">{{ total_operations }}</div></div>
+  <div class="card stat stat-warn"><div class="label">Failed model calls (all time)</div><div class="value">{{ failed_operations }}</div></div>
 </div>
+<section aria-labelledby="agent-analytics-title">
+  <div class="page-header">
+    <div>
+      <h2 id="agent-analytics-title">AI agent analytics</h2>
+      <p>Operation metadata from the last 30 days, through {{ agent_analytics.period_start|date:"M j, Y" }} to now. Prompts and responses are excluded.</p>
+    </div>
+  </div>
+  <div class="grid grid-2" style="margin-bottom:18px">
+    <div class="card stat"><div class="label">Calls</div><div class="value">{{ agent_analytics.calls }}</div></div>
+    <div class="card stat"><div class="label">Success rate</div><div class="value">{% if agent_analytics.success_rate != None %}{{ agent_analytics.success_rate|floatformat:1 }}%{% else %}—{% endif %}</div></div>
+    <div class="card stat stat-warn"><div class="label">Failed calls</div><div class="value">{{ agent_analytics.failures }}</div></div>
+    <div class="card stat"><div class="label">Average duration</div><div class="value">{% if agent_analytics.average_duration_ms != None %}{{ agent_analytics.average_duration_ms }} ms{% else %}—{% endif %}</div></div>
+  </div>
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-header">
+      <div>
+        <h3>Clinician allergy-check usage</h3>
+        <p class="muted">Aggregate analytics for the local read-only tool; these checks are not Gemini calls. Patient identities, medicine names, and allergy details are excluded.</p>
+      </div>
+    </div>
+    <div class="grid grid-2" style="padding:0 18px 18px">
+      <div class="card stat"><div class="label">Checks</div><div class="value">{{ agent_analytics.allergy_tool_analytics.checks }}</div></div>
+      <div class="card stat"><div class="label">Checks with matches</div><div class="value">{{ agent_analytics.allergy_tool_analytics.checks_with_matches }}</div></div>
+      <div class="card stat"><div class="label">Match rate</div><div class="value">{% if agent_analytics.allergy_tool_analytics.match_rate != None %}{{ agent_analytics.allergy_tool_analytics.match_rate|floatformat:1 }}%{% else %}—{% endif %}</div></div>
+    </div>
+  </div>
+  <div class="card" style="margin-bottom:18px">
+    <div class="card-header">
+      <div>
+        <h3>Usage by agent</h3>
+        <p class="muted">Calls are grouped by their logged operation type.</p>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr><th>Agent</th><th>Calls</th><th>Success rate</th><th>Failed</th><th>Average duration</th><th>Last used</th></tr>
+        </thead>
+        <tbody>
+          {% for agent in agent_analytics.agents %}
+          <tr>
+            <td>{{ agent.name }}{% if agent.operation_labels %}<br><small class="muted">{{ agent.operation_labels }}</small>{% endif %}</td>
+            <td>{{ agent.calls }}</td>
+            <td>{% if agent.success_rate != None %}{{ agent.success_rate|floatformat:1 }}%{% else %}—{% endif %}</td>
+            <td>{{ agent.failures }}</td>
+            <td>{% if agent.average_duration_ms != None %}{{ agent.average_duration_ms }} ms{% else %}—{% endif %}</td>
+            <td>{% if agent.last_used %}{{ agent.last_used|date:"M j, Y g:i A" }}{% else %}—{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+<section aria-labelledby="agent-catalog-title">
+  <div class="page-header">
+    <div>
+      <h2 id="agent-catalog-title">AI agent inventory</h2>
+      <p>Current in-app capabilities, tool access, and data boundaries.</p>
+    </div>
+  </div>
+  <div class="grid grid-2" style="margin-bottom:18px">
+    {% for agent in agent_analytics.agents %}
+    <article class="card">
+      <div class="card-header">
+        <div>
+          <h3>{{ agent.name }}</h3>
+          <p class="muted">{{ agent.description }}</p>
+        </div>
+      </div>
+      <div class="card-body">
+        {% if agent.operation_labels %}<p><strong>Logged operation:</strong> {{ agent.operation_labels }}</p>{% endif %}
+        <h4>Tools and what they do</h4>
+        <ul>
+          {% for tool in agent.tools %}
+          <li><strong>{{ tool.name }}:</strong> {{ tool.description }}</li>
+          {% endfor %}
+        </ul>
+        <p><strong>Data access:</strong> {{ agent.data_access }}</p>
+        {% if agent.slug != "other-ai-operations" %}
+        <p class="muted">Last-30-day calls: {{ agent.calls }}{% if agent.last_used %}; last used {{ agent.last_used|date:"M j, Y g:i A" }}{% endif %}</p>
+        {% endif %}
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
 <div class="grid grid-2" style="margin-bottom:18px">
   <div class="card">
     <div class="card-header"><h2>Active translation settings</h2></div>
@@ -79,5 +166,5 @@
     </table>
   </div>
 </div>
-<p class="muted" style="margin-top:12px">This dashboard is limited to AI engineers. Activity metadata is shown for monitoring; message and page content is excluded.</p>
+<p class="muted" style="margin-top:12px">This dashboard is limited to AI engineers. Activity metadata is shown for monitoring; prompts, replies, message content, and patient identifiers are excluded from operation logs.</p>
 {% endblock %}

@@ -9,6 +9,7 @@
 <a class="nav-item {% if name == 'inbox' or name == 'thread' %}active{% endif %}" href="{% url 'clinician:inbox' %}">Patient messages</a>
 <div class="nav-label">Reference</div>
 <a class="nav-item {% if name == 'staff_assistant' or name == 'staff_assistant_chat' %}active{% endif %}" href="{% url 'clinic:staff_assistant' %}"><span class="ai-nav-content">{% include "includes/ai_sparkle.html" %}Policy assistant</span><span class="ai-badge">AI</span></a>
+<a class="nav-item {% if name == 'medicine_lookup' or name == 'medicine_lookup_search' %}active{% endif %}" href="{% url 'clinic:medicine_lookup' %}"><span class="ai-nav-content">{% include "includes/ai_sparkle.html" %}Medicine lookup</span><span class="ai-badge">AI</span></a>
 <a class="nav-item" href="{% url 'public:resource_list' %}" target="_blank" rel="noopener">Practice policies</a>
 {% endwith %}
 {% endblock %}

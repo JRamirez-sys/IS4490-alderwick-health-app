@@ -30,7 +30,7 @@ Every account of the same type shares one password.
 | Patient | `luis.hernandez` | Spanish-speaking patient with diabetes, high blood pressure, and a question about his A1c results |
 | Front office | `brittany.hale` | Front Office Supervisor at the Sugar House clinic |
 | Doctor | `james.whitaker` | Family medicine physician with a full schedule today, unsigned notes, and patient messages |
-| AI engineer | `nikhil.rao` | Access to the (currently empty) AI operations dashboard |
+| AI engineer | `nikhil.rao` | Reviews agent inventory, tool access, usage analytics, and recent AI operations |
 
 ## What each user type can do
 
@@ -59,6 +59,8 @@ Patients can only ever see their own records.
 - Answer front-office patient messages
 - Look up patients and book appointments by phone
 - Use the staff policy assistant to ask about published practice policies or draft a response for review
+- Use **Medicine lookup** in the left navigation for general medication information with links to public sources
+- Open **Operations brief** in the left navigation for an on-demand summary of open appointment requests and patient messages, ranked by backlog and age when AI is available
 
 Front-office staff see demographics, insurance, and appointments, but **not** clinical records.
 
@@ -69,6 +71,10 @@ Front-office staff see demographics, insurance, and appointments, but **not** cl
 - Write, save, and sign visit notes. Signing locks the note and releases the after-visit summary to the patient portal.
 - Answer clinical messages assigned to them
 - Use the staff policy assistant to ask about published practice policies or draft a response for review
+- Use **Medicine lookup** in the left navigation for general medication information with links to public sources
+- Generate an on-demand AI operations brief that ranks their unsigned notes and patient messages awaiting a reply by backlog and age
+
+The daily operations brief uses only aggregate queue counts and ages, not patient names, note contents, or message contents. AI prioritization requires a configured Gemini API key; if AI is unavailable, the current counts still display without an AI ranking. The brief is a prioritization aid; employees review queues and decide what action to take.
 
 Doctors cannot open charts of patients outside their care relationships. Every attempt is recorded in the audit log.
 
@@ -81,9 +87,20 @@ Doctors cannot open charts of patients outside their care relationships. Every a
 - Do not enter real patient information, identifiers, or clinical details. Conversations stay in the current page and are not saved; AI operation metadata is recorded without prompts or replies.
 - Answers can be incomplete or incorrect. Check the linked policy or ask a supervisor when the assistant cannot find a definitive answer.
 
+### Medicine lookup
+
+- Front-office employees and doctors can search for general medicine information using Google Search grounding.
+- Results include links from FDA, DailyMed, MedlinePlus, or NIH domains. If no trusted-source citations are available, the lookup does not return an answer.
+- Enter only a medicine name. Never enter patient names, identifiers, symptoms, or other patient details; the feature does not load patient records.
+- Results are general information, not medical advice. Do not use the tool for patient-specific dosing or treatment decisions; consult a clinician or pharmacist.
+- Doctors can optionally check for exact, case-insensitive matches in allergy records for patients in their authorized care panel. The search is read-only, audited, stays in the application, and does not infer brand/generic equivalents. A missing match does not confirm the absence of an allergy; review the chart.
+- Front-office employees cannot search patient allergy records. Route patient-specific allergy questions to a clinician.
+- A configured Gemini API key and a model that supports Google Search are required. AI operation metadata is recorded without the medicine query or reply.
+
 ### AI engineers
 
-- Review recent AI model calls in the AI operations dashboard, including the operation, model, requesting role, target language, input count, status, duration, and failure type.
+- Review the AI agent inventory and its tool access in the AI operations dashboard, including what each tool does and the data boundaries for each agent.
+- Review last-30-day call totals, success rates, failures, average durations, and last-used time by agent, plus aggregate clinician allergy-check usage. Patient identities, medicine names, allergy details, prompts, and replies are not included in these dashboard analytics.
 - Configure AI translation by saving a draft and explicitly publishing it. Engineers can enable or disable translation, select an environment-approved Gemini model, choose available languages, and set supplemental style or terminology guidance.
 - Core translation safeguards are fixed in code and cannot be changed through the dashboard. Supplemental guidance should contain no patient data.
 - The dashboard deliberately excludes prompts, translations, patient names, and record identifiers.

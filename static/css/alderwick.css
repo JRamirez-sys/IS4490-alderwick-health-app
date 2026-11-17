@@ -121,6 +121,31 @@ small, .muted { color: var(--muted); }
 .stat-accent { border-top: 3px solid var(--brand); }
 .stat-warn { border-top: 3px solid var(--accent); }
 
+.operations-brief { margin-bottom: 18px; overflow: hidden; }
+.operations-brief-intro { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 18px 20px; }
+.operations-brief-intro h2 { margin: 0; font-size: 1.15rem; }
+.operations-brief-kicker { margin: 0 0 3px; color: var(--brand); font-size: .72rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.operations-brief-description { margin: 5px 0 0; color: var(--muted); font-size: .9rem; }
+.operations-brief-form { flex: none; }
+.operations-brief-result { border-top: 1px solid var(--line); padding: 16px 20px 18px; background: #f8fbfb; }
+.operations-brief-result-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; margin-bottom: 14px; }
+.operations-brief-result-caption { margin: 5px 0 0; color: var(--muted); font-size: .86rem; }
+.operations-brief-close { flex: none; padding: 4px 0 4px 8px; }
+.operations-brief-close span { font-size: 1.1rem; }
+.operations-brief-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.operations-brief-item { min-width: 0; padding: 15px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
+.operations-brief-item-heading { display: flex; align-items: center; gap: 9px; }
+.operations-brief-item-heading h3 { margin: 0; font-size: .94rem; line-height: 1.35; }
+.operations-brief-item-heading a { color: var(--navy); }
+.operations-brief-rank { display: grid; width: 26px; height: 26px; flex: none; place-items: center; border-radius: 50%; background: var(--brand-light); color: var(--brand-dark); font-size: .8rem; font-weight: 800; }
+.operations-brief-count { display: flex; align-items: baseline; gap: 7px; margin: 13px 0 9px; color: var(--muted); font-size: .86rem; }
+.operations-brief-count strong { color: var(--navy); font-size: 1.8rem; line-height: 1; }
+.operations-brief-details { display: flex; flex-wrap: wrap; gap: 6px; }
+.operations-brief-details span { padding: 4px 8px; border-radius: 999px; background: #f0f4f4; color: #43565b; font-size: .74rem; }
+.operations-brief-note { margin: 13px 0 0; color: var(--muted); font-size: .82rem; }
+.operations-brief-empty { margin: 0; padding: 12px 0 2px; color: var(--muted); }
+.operations-brief-result .alert { margin-top: 12px; }
+
 /* ---------- provider cards ---------- */
 .provider-card { display: grid; grid-template-columns: 72px minmax(0, 1fr) 210px; gap: 18px; padding: 20px; align-items: start; }
 .avatar { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; color: #fff; background: var(--brand); font-size: 1.2rem; flex: none; }
@@ -286,6 +311,13 @@ table.table { width: 100%; border-collapse: collapse; font-size: .9rem; }
 .assistant-form-footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .assistant-form-footer .btn { flex: none; }
 .assistant-form-footer svg { width: 17px; height: 17px; }
+.medicine-lookup-disclaimer { margin: 0; color: var(--muted); font-size: .88rem; line-height: 1.5; }
+.medicine-lookup-result { padding: 0 20px 20px; }
+.medicine-lookup-result .assistant-message { max-width: 100%; }
+.medicine-allergy-check { padding: 18px 20px; border-top: 1px solid var(--line); }
+.medicine-allergy-check h3 { margin: 0 0 8px; }
+.medicine-allergy-disclaimer { color: var(--muted); font-size: .88rem; line-height: 1.5; }
+.medicine-allergy-results ul { margin: 10px 0 0; padding-left: 22px; }
 .dashboard-toolbar { justify-content: flex-end; }
 .assistant-link { gap: 8px; }
 .dashboard-search { flex-wrap: nowrap; }
@@ -349,4 +381,6 @@ table.table { width: 100%; border-collapse: collapse; font-size: .9rem; }
   .bubble { max-width: 100%; }
   .assistant-message { max-width: 100%; }
   .assistant-form, .assistant-messages { padding: 14px; }
+  .operations-brief-intro { align-items: flex-start; flex-direction: column; }
+  .operations-brief-form, .operations-brief-form .btn { width: 100%; }
 }

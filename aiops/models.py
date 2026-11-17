@@ -13,6 +13,8 @@ class AIOperation(models.Model):
         APPOINTMENT_REQUEST_TRANSLATION = "appointment_request_translation", "Appointment request translation"
         PORTAL_PAGE_TRANSLATION = "portal_page_translation", "Portal page translation"
         STAFF_POLICY_ASSISTANT = "staff_policy_assistant", "Staff policy assistant"
+        DAILY_OPERATIONS_BRIEF = "daily_operations_brief", "Daily operations brief"
+        MEDICINE_LOOKUP = "medicine_lookup", "Medicine lookup"
 
     class Status(models.TextChoices):
         SUCCEEDED = "succeeded", "Succeeded"
