@@ -15,7 +15,14 @@ from accounts.models import User
 from audit.models import AuditLog
 from audit.utils import log_event
 from clinic import gemini
-from clinic.operations_brief import get_operations_tasks, prioritize_operations_tasks
+from clinic.operations_brief import (
+    generate_operations_summary,
+    get_operations_calendar,
+    get_recent_operations_changes,
+    get_operations_tasks,
+    operations_brief_session_key,
+    prioritize_operations_tasks,
+)
 from clinic.models import (
     Appointment,
     AppointmentRequest,
@@ -70,13 +77,17 @@ def dashboard(request):
 @front_office_required
 @require_http_methods(["GET", "POST"])
 def operations_brief(request):
-    brief = None
-    brief_error = ""
-    ai_prioritized = False
+    session_key = operations_brief_session_key(request.user)
     if request.method == "POST":
-        if request.POST.get("action") != "generate_operations_brief":
+        action = request.POST.get("action")
+        if action == "clear_operations_brief":
+            request.session.pop(session_key, None)
+            return redirect("frontdesk:operations_brief")
+        if action != "generate_operations_brief":
             return HttpResponseBadRequest("Unsupported brief action.")
         brief = get_operations_tasks(request.user.role)
+        brief_error = ""
+        ai_prioritized = False
         try:
             brief = prioritize_operations_tasks(brief, request.user.role)
             ai_prioritized = bool(brief)
@@ -87,14 +98,54 @@ def operations_brief(request):
                 "appointment_requests": f'{reverse("frontdesk:requests")}?status=open',
                 "front_office_replies": reverse("frontdesk:messages"),
             }[item["key"]]
+        calendar = get_operations_calendar(office=request.user.office)
+        changes = get_recent_operations_changes()
+        summary = ""
+        summary_error = ""
+        try:
+            summary = generate_operations_summary(
+                brief,
+                calendar["summary"],
+                changes["counts"],
+                request.user.role,
+            )
+        except gemini.GeminiError:
+            summary_error = "AI summary is unavailable. The appointment calendar and recorded changes are still shown."
+        request.session[session_key] = {
+            "items": brief,
+            "error": brief_error,
+            "ai_prioritized": ai_prioritized,
+            "summary": summary,
+            "summary_error": summary_error,
+            "changes": changes["events"],
+            "changes_truncated": changes["truncated"],
+        }
+        return redirect("frontdesk:operations_brief")
 
+    saved_brief = request.session.get(session_key)
+    calendar = get_operations_calendar(office=request.user.office)
+    for day in calendar["days"]:
+        for appointment in day["appointments"]:
+            appointment.patient_url = reverse("frontdesk:patient_detail", args=[appointment.patient_id])
     return render(
         request,
         "frontdesk/operations_brief.html",
         {
-            "operations_brief": brief,
-            "operations_brief_error": brief_error,
-            "operations_brief_ai_prioritized": ai_prioritized,
+            "operations_brief": saved_brief.get("items") if saved_brief is not None else None,
+            "operations_brief_error": saved_brief.get("error", "") if saved_brief is not None else "",
+            "operations_brief_ai_prioritized": (
+                saved_brief.get("ai_prioritized", False) if saved_brief is not None else False
+            ),
+            "operations_brief_saved": saved_brief is not None,
+            "operations_brief_summary": saved_brief.get("summary", "") if saved_brief is not None else "",
+            "operations_summary_error": (
+                saved_brief.get("summary_error", "") if saved_brief is not None else ""
+            ),
+            "operations_changes": saved_brief.get("changes", []) if saved_brief is not None else [],
+            "operations_changes_truncated": (
+                saved_brief.get("changes_truncated", False) if saved_brief is not None else False
+            ),
+            "operations_calendar_days": calendar["days"],
         },
     )
 

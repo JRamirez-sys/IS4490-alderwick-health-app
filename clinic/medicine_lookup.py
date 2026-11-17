@@ -1,8 +1,11 @@
 """Staff-only, web-grounded general medication information."""
 
 import json
+import logging
 import re
-from urllib.parse import urlparse
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from django.http import JsonResponse
 from django.shortcuts import render
@@ -25,6 +28,8 @@ MAX_MEDICINE_LENGTH = 120
 MAX_REQUEST_LENGTH = 1_000
 MAX_ANSWER_LENGTH = 6_000
 MAX_SOURCES = 6
+GROUNDING_REDIRECT_HOST = "vertexaisearch.cloud.google.com"
+DAILYMED_HOST = "dailymed.nlm.nih.gov"
 TRUSTED_SOURCE_DOMAINS = ("dailymed.nlm.nih.gov", "fda.gov", "medlineplus.gov", "nih.gov")
 PATIENT_DATA_PATTERN = re.compile(
     r"\b(?:patient|mrn|dob|ssn|date of birth|symptoms?|diagnosed)\b"
@@ -33,6 +38,7 @@ PATIENT_DATA_PATTERN = re.compile(
     r"|\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b",
     re.IGNORECASE,
 )
+logger = logging.getLogger(__name__)
 
 
 @medicine_lookup_required
@@ -58,11 +64,67 @@ def _validate_medicine(payload):
 
 def _is_trusted_source(url):
     parsed = urlparse(url)
-    if parsed.scheme != "https" or not parsed.hostname:
+    try:
+        port = parsed.port
+    except ValueError:
+        return False
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or port not in (None, 443)
+    ):
         return False
 
     host = parsed.hostname.lower()
     return any(host == domain or host.endswith(f".{domain}") for domain in TRUSTED_SOURCE_DOMAINS)
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, request, file, code, message, headers, new_url):
+        return None
+
+
+def _resolve_grounding_source(url):
+    if _is_trusted_source(url):
+        return url
+
+    parsed = urlparse(url)
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != GROUNDING_REDIRECT_HOST
+        or parsed.username
+        or parsed.password
+        or port not in (None, 443)
+        or not parsed.path.startswith("/grounding-api-redirect/")
+    ):
+        return None
+
+    request = Request(url, method="HEAD")
+    try:
+        with build_opener(_NoRedirectHandler).open(request, timeout=3) as response:
+            destination = response.geturl()
+    except HTTPError as exc:
+        try:
+            if exc.code not in (301, 302, 303, 307, 308):
+                logger.warning("grounding_source_resolution_failed status=%s", exc.code)
+                return None
+            location = exc.headers.get("Location")
+            if not location:
+                return None
+            destination = urljoin(url, location)
+        finally:
+            exc.close()
+    except (URLError, TimeoutError) as exc:
+        logger.warning("grounding_source_resolution_failed error=%s", type(exc).__name__)
+        return None
+
+    return destination if _is_trusted_source(destination) else None
 
 
 def _grounded_sources(response):
@@ -74,20 +136,115 @@ def _grounded_sources(response):
             continue
         for chunk in metadata.grounding_chunks or []:
             web_source = chunk.web
-            if web_source is None or not web_source.uri or not _is_trusted_source(web_source.uri):
+            if web_source is None or not web_source.uri:
                 continue
-            if web_source.uri in seen_urls:
+            source_url = _resolve_grounding_source(web_source.uri)
+            if source_url is None or source_url in seen_urls:
                 continue
-            seen_urls.add(web_source.uri)
+            seen_urls.add(source_url)
             sources.append(
                 {
-                    "title": (web_source.title or urlparse(web_source.uri).hostname or "Source")[:200],
-                    "url": web_source.uri,
+                    "title": (web_source.title or urlparse(source_url).hostname or "Source")[:200],
+                    "url": source_url,
                 }
             )
             if len(sources) == MAX_SOURCES:
                 return sources
     return sources
+
+
+def _dailymed_setid(url):
+    parsed = urlparse(url)
+    if (
+        not _is_trusted_source(url)
+        or parsed.hostname != DAILYMED_HOST
+        or parsed.path != "/dailymed/drugInfo.cfm"
+    ):
+        return None
+
+    setids = parse_qs(parsed.query).get("setid", [])
+    if len(setids) != 1 or not re.fullmatch(r"[A-Za-z0-9-]{32,64}", setids[0]):
+        return None
+    return setids[0]
+
+
+def _title_matches_medicine(title, medicine):
+    title_words = re.findall(r"[a-z0-9]+", title.casefold())
+    medicine_words = re.findall(r"[a-z0-9]+", medicine.casefold())
+    if not medicine_words:
+        return False
+    width = len(medicine_words)
+    return any(title_words[index : index + width] == medicine_words for index in range(len(title_words) - width + 1))
+
+
+def _official_dailymed_image(medicine, sources):
+    label_sources = {
+        setid: source["url"]
+        for source in sources
+        if (setid := _dailymed_setid(source["url"])) is not None
+    }
+    if len(label_sources) != 1:
+        return None
+
+    setid, source_url = next(iter(label_sources.items()))
+    media_url = f"https://{DAILYMED_HOST}/dailymed/services/v2/spls/{setid}/media.json"
+    request = Request(media_url, headers={"Accept": "application/json"})
+    try:
+        with build_opener(_NoRedirectHandler).open(request, timeout=3) as response:
+            payload = response.read(64_001)
+    except HTTPError as exc:
+        logger.warning("dailymed_image_lookup_failed status=%s", exc.code)
+        return None
+    except (URLError, TimeoutError) as exc:
+        logger.warning("dailymed_image_lookup_failed error=%s", type(exc).__name__)
+        return None
+
+    if len(payload) > 64_000:
+        logger.warning("dailymed_image_lookup_failed reason=response_too_large")
+        return None
+    try:
+        response_data = json.loads(payload)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        logger.warning("dailymed_image_lookup_failed error=%s", type(exc).__name__)
+        return None
+
+    if not isinstance(response_data, dict):
+        return None
+    data = response_data.get("data")
+    if not isinstance(data, dict):
+        return None
+
+    title = data.get("title", "")
+    media_items = data.get("media", [])
+    if (
+        data.get("setid") != setid
+        or not isinstance(title, str)
+        or not _title_matches_medicine(title, medicine)
+        or not isinstance(media_items, list)
+    ):
+        return None
+
+    for media in media_items:
+        if not isinstance(media, dict) or media.get("mime_type") not in ("image/jpeg", "image/png", "image/gif"):
+            continue
+        image_url = media.get("url", "")
+        if not isinstance(image_url, str):
+            continue
+        parsed_image = urlparse(image_url)
+        image_setids = parse_qs(parsed_image.query).get("setid", [])
+        if (
+            _is_trusted_source(image_url)
+            and parsed_image.hostname == DAILYMED_HOST
+            and parsed_image.path == "/dailymed/image.cfm"
+            and image_setids == [setid]
+        ):
+            return {
+                "url": image_url,
+                "alt": f"Image from the DailyMed label for {title}",
+                "caption": title,
+                "source_url": source_url,
+            }
+    return None
 
 
 def _lookup_medicine(medicine, actor_role):
@@ -101,7 +258,9 @@ def _lookup_medicine(medicine, actor_role):
             "warnings only when supported by the search results. Do not provide patient-specific advice, "
             "diagnoses, treatment choices, dosing instructions, or recommendations to start, stop, or change "
             "a medicine. Do not request or infer patient information. If the requested information is not "
-            "supported by the sources, say so. Use plain text and keep the response concise."
+            "supported by the sources, say so. Use plain text and keep the response concise. Format the answer "
+            "with these headings on separate lines: Overview, Common side effects, and Important warnings. "
+            "Use short bullet points under each heading and omit any section not supported by the sources."
         ),
         operation=AIOperation.Operation.MEDICINE_LOOKUP,
         actor_role=actor_role,
@@ -111,7 +270,11 @@ def _lookup_medicine(medicine, actor_role):
     sources = _grounded_sources(response)
     if not answer or len(answer) > MAX_ANSWER_LENGTH or not sources:
         raise gemini.GeminiError("Gemini returned an incomplete medicine lookup.")
-    return {"answer": answer, "sources": sources}
+    return {
+        "answer": answer,
+        "sources": sources,
+        "image": _official_dailymed_image(medicine, sources),
+    }
 
 
 @medicine_lookup_required

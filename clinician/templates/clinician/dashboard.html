@@ -1,9 +1,8 @@
 {% extends "clinician/base.html" %}
-{% load static %}
 {% block title %}Today | Alderwick{% endblock %}
 {% block content %}
 <div class="page-header"><div><h1>{{ provider.short_name }}'s day</h1><p>{{ today|date:"l, F j" }} &middot; {{ panel_size }} patients in your panel</p></div></div>
-{% include "clinic/includes/daily_operations_brief.html" with operations_brief_description="A quick look at your unsigned notes and patient messages awaiting a reply." operations_brief_empty_message="No unsigned notes or patient messages are awaiting your reply." %}
+{% include "clinic/includes/daily_operations_brief.html" with operations_brief_description="Your week-ahead appointment calendar, unsigned notes, unread messages, and recent policy, provider, and insurance changes." operations_brief_empty_message="No unsigned notes or patient messages are awaiting your reply." %}
 <div class="grid grid-4" style="margin-bottom:18px">
   <div class="card stat stat-accent"><div class="label">Today's visits</div><div class="value">{{ todays|length }}</div></div>
   <a class="card card-link stat stat-warn" href="#notes"><div class="label">Notes to sign</div><div class="value">{{ drafts|length }}</div></a>
@@ -49,5 +48,4 @@
     </div>
   </aside>
 </div>
-<script src="{% static 'js/daily_operations_brief.js' %}" defer></script>
 {% endblock %}

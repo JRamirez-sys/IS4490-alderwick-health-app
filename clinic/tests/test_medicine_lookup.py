@@ -1,5 +1,8 @@
 import json
+from email.message import Message
+from io import BytesIO
 from types import SimpleNamespace
+from urllib.error import HTTPError
 from unittest import mock
 
 from django.test import TestCase
@@ -9,6 +12,7 @@ from google.genai import types
 from accounts.models import User
 from audit.models import AuditLog
 from clinic import gemini
+from clinic.medicine_lookup import _grounded_sources, _official_dailymed_image
 from clinic.models import Allergy
 from clinic.testing import make_patient, make_provider, make_user
 
@@ -83,6 +87,7 @@ class MedicineLookupTests(TestCase):
                         "url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=example",
                     }
                 ],
+                "image": None,
             },
         )
         self.assertEqual(json.loads(generate.call_args.args[0]), {"medicine": "metformin"})
@@ -104,6 +109,104 @@ class MedicineLookupTests(TestCase):
             response.json()["error"],
             "Medicine lookup is unavailable right now. Please try again later.",
         )
+
+    def test_google_grounding_redirect_to_trusted_source_is_accepted(self):
+        self.client.force_login(self.front_office)
+        redirect_url = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/token"
+        trusted_url = "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=example"
+        generated = self.grounded_response([(redirect_url, "DailyMed label")])
+        headers = Message()
+        headers["Location"] = trusted_url
+        opener = mock.Mock()
+        opener.open.side_effect = HTTPError(redirect_url, 302, "Found", headers, BytesIO())
+        with (
+            mock.patch("clinic.medicine_lookup.gemini.generate_with_google_search", return_value=generated),
+            mock.patch("clinic.medicine_lookup.build_opener", return_value=opener),
+        ):
+            response = self.post_lookup()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["sources"][0]["url"], trusted_url)
+        request = opener.open.call_args.args[0]
+        self.assertEqual(request.get_method(), "HEAD")
+        self.assertEqual(opener.open.call_args.kwargs["timeout"], 3)
+
+    def test_google_grounding_redirect_to_untrusted_source_is_rejected(self):
+        redirect_url = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/token"
+        generated = self.grounded_response([(redirect_url, "Untrusted source")])
+        headers = Message()
+        headers["Location"] = "https://www.drugs.com/lyrica.html"
+        opener = mock.Mock()
+        opener.open.side_effect = HTTPError(redirect_url, 302, "Found", headers, BytesIO())
+
+        with mock.patch("clinic.medicine_lookup.build_opener", return_value=opener):
+            sources = _grounded_sources(generated)
+
+        self.assertEqual(sources, [])
+
+    def test_official_label_image_requires_one_exact_dailymed_match(self):
+        setid = "9187708f-cc7b-4fe9-828e-9a77e98354ad"
+        source_url = f"https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid={setid}"
+        image_url = (
+            f"https://dailymed.nlm.nih.gov/dailymed/image.cfm?setid={setid}&name=lyrica-01.jpg"
+        )
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = json.dumps(
+            {
+                "data": {
+                    "setid": setid,
+                    "title": "LYRICA (PREGABALIN) CAPSULE",
+                    "media": [{"mime_type": "image/jpeg", "url": image_url}],
+                }
+            }
+        ).encode()
+        opener = mock.Mock()
+        opener.open.return_value = response
+
+        with mock.patch("clinic.medicine_lookup.build_opener", return_value=opener):
+            image = _official_dailymed_image("Lyrica", [{"url": source_url}])
+
+        self.assertEqual(
+            image,
+            {
+                "url": image_url,
+                "alt": "Image from the DailyMed label for LYRICA (PREGABALIN) CAPSULE",
+                "caption": "LYRICA (PREGABALIN) CAPSULE",
+                "source_url": source_url,
+            },
+        )
+
+    def test_official_label_image_is_omitted_for_ambiguous_products(self):
+        setids = (
+            "9187708f-cc7b-4fe9-828e-9a77e98354ad",
+            "e8089a1f-6a21-4d4d-bb7f-7fbeef213eab",
+        )
+        sources = [
+            {"url": f"https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid={setid}"}
+            for setid in setids
+        ]
+        with mock.patch("clinic.medicine_lookup.build_opener") as build_opener:
+            image = _official_dailymed_image("Lyrica", sources)
+
+        self.assertIsNone(image)
+        build_opener.assert_not_called()
+
+    def test_official_label_image_is_omitted_when_label_name_does_not_match(self):
+        setid = "9187708f-cc7b-4fe9-828e-9a77e98354ad"
+        source_url = f"https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid={setid}"
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = json.dumps(
+            {"data": {"setid": setid, "title": "PREGABALIN CAPSULE", "media": []}}
+        ).encode()
+        opener = mock.Mock()
+        opener.open.return_value = response
+
+        with mock.patch("clinic.medicine_lookup.build_opener", return_value=opener):
+            image = _official_dailymed_image("Lyrica", [{"url": source_url}])
+
+        self.assertIsNone(image)
 
     def test_invalid_medicine_is_rejected_without_calling_model(self):
         self.client.force_login(self.front_office)

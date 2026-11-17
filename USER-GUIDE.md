@@ -60,7 +60,7 @@ Patients can only ever see their own records.
 - Look up patients and book appointments by phone
 - Use the staff policy assistant to ask about published practice policies or draft a response for review
 - Use **Medicine lookup** in the left navigation for general medication information with links to public sources
-- Open **Operations brief** in the left navigation for an on-demand summary of open appointment requests and patient messages, ranked by backlog and age when AI is available
+- Open **Operations brief** in the left navigation for a week-ahead appointment calendar, open requests, unread messages, recent policy/provider/insurance changes, and an AI-generated aggregate overview
 
 Front-office staff see demographics, insurance, and appointments, but **not** clinical records.
 
@@ -74,7 +74,7 @@ Front-office staff see demographics, insurance, and appointments, but **not** cl
 - Use **Medicine lookup** in the left navigation for general medication information with links to public sources
 - Generate an on-demand AI operations brief that ranks their unsigned notes and patient messages awaiting a reply by backlog and age
 
-The daily operations brief uses only aggregate queue counts and ages, not patient names, note contents, or message contents. AI prioritization requires a configured Gemini API key; if AI is unavailable, the current counts still display without an AI ranking. The brief is a prioritization aid; employees review queues and decide what action to take.
+The operations brief's AI summary receives aggregate appointment and work-queue counts plus counts of recent policy, provider, and insurance changes; it does not receive patient names, note contents, message contents, or appointment details. The calendar itself displays patient names and appointment details locally, limited to the signed-in role's access (front-office staff by assigned location, clinicians by their own schedule). Recent changes are read from Django admin history for policy, provider, and insurance records over the prior seven days; changes made outside Django admin are not included. After generation, the summary and change list stay available across staff pages and browser tabs for the signed-in session. Use **Clear brief** to remove that snapshot; the live appointment calendar remains visible. Generate a new brief to refresh the summary and change list. AI features require a configured Gemini API key; if AI is unavailable, queue counts and the calendar still display. The brief is a prioritization aid; employees review queues and decide what action to take.
 
 Doctors cannot open charts of patients outside their care relationships. Every attempt is recorded in the audit log.
 
@@ -91,6 +91,8 @@ Doctors cannot open charts of patients outside their care relationships. Every a
 
 - Front-office employees and doctors can search for general medicine information using Google Search grounding.
 - Results include links from FDA, DailyMed, MedlinePlus, or NIH domains. If no trusted-source citations are available, the lookup does not return an answer.
+- Results are organized into an overview, common side effects, and important warnings when supported by trusted sources. An official DailyMed label image may appear when one exact matching product label is available.
+- Label images are for reference only, not pill identification; products may differ by strength or manufacturer.
 - Enter only a medicine name. Never enter patient names, identifiers, symptoms, or other patient details; the feature does not load patient records.
 - Results are general information, not medical advice. Do not use the tool for patient-specific dosing or treatment decisions; consult a clinician or pharmacist.
 - Doctors can optionally check for exact, case-insensitive matches in allergy records for patients in their authorized care panel. The search is read-only, audited, stays in the application, and does not infer brand/generic equivalents. A missing match does not confirm the absence of an allergy; review the chart.

@@ -8,6 +8,7 @@ from django.utils import timezone
 from audit.models import AuditLog
 from clinic import gemini
 from clinic.models import Appointment, LabResult, Message, MessageThread, Visit
+from clinic.operations_brief import operations_brief_session_key
 from clinic.testing import (
     local_dt,
     make_appointment,
@@ -66,6 +67,48 @@ class DashboardAndScheduleTests(ClinicianTestCase):
         self.assertEqual(context["awaiting_count"], 1)
         self.assertEqual(len(context["abnormal_labs"]), 1)
 
+    def test_operations_calendar_shows_only_the_current_provider_schedule(self):
+        appointment = make_appointment(
+            patient=self.patient,
+            provider=self.provider,
+            start=local_dt(timezone.localdate(), 10),
+        )
+        make_appointment(
+            patient=self.stranger,
+            provider=self.colleague,
+            start=local_dt(timezone.localdate(), 11),
+        )
+
+        response = self.client.get(reverse("clinician:dashboard"))
+
+        self.assertIn(appointment, response.context["operations_calendar_days"][0]["appointments"])
+        self.assertContains(response, self.patient.full_name)
+        self.assertNotContains(response, self.stranger.full_name)
+
+    def test_existing_brief_session_without_new_summary_fields_still_loads(self):
+        session = self.client.session
+        session[operations_brief_session_key(self.provider.user)] = {
+            "items": [
+                {
+                    "key": "unsigned_notes",
+                    "label": "Unsigned notes",
+                    "count": 1,
+                    "over_24h": 0,
+                    "oldest_age_hours": 1,
+                    "url": "#notes",
+                }
+            ],
+            "error": "",
+            "ai_prioritized": True,
+        }
+        session.save()
+
+        response = self.client.get(reverse("clinician:dashboard"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Unsigned notes")
+        self.assertNotContains(response, "AI-generated overview")
+
     @mock.patch(
         "clinician.views.get_operations_tasks",
         return_value=[
@@ -78,22 +121,38 @@ class DashboardAndScheduleTests(ClinicianTestCase):
             }
         ],
     )
+    @mock.patch("clinician.views.generate_operations_summary", return_value="One appointment this week.")
     @mock.patch(
         "clinician.views.prioritize_operations_tasks",
         side_effect=lambda tasks, role: tasks,
     )
-    def test_dashboard_generates_operations_brief_for_current_provider(self, prioritize, get_tasks):
-        response = self.client.post(
+    def test_dashboard_generates_operations_brief_for_current_provider(
+        self, prioritize, generate_summary, get_tasks
+    ):
+        post_response = self.client.post(
             reverse("clinician:dashboard"),
             {"action": "generate_operations_brief"},
         )
 
+        self.assertRedirects(post_response, reverse("clinician:dashboard"))
+        response = self.client.get(reverse("clinician:dashboard"))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["operations_brief"][0]["url"], "#notes")
         self.assertContains(response, "AI-prioritized")
-        self.assertContains(response, "data-close-operations-brief")
+        self.assertContains(response, "One appointment this week.")
+        self.assertContains(response, "data-clear-operations-brief")
+        self.assertContains(response, "Saved for this signed-in session")
         get_tasks.assert_called_once_with(self.provider.user.role, provider=self.provider)
         prioritize.assert_called_once()
+        generate_summary.assert_called_once()
+
+        clear_response = self.client.post(
+            reverse("clinician:dashboard"),
+            {"action": "clear_operations_brief"},
+        )
+        self.assertRedirects(clear_response, reverse("clinician:dashboard"))
+        response = self.client.get(reverse("clinician:dashboard"))
+        self.assertNotContains(response, "data-clear-operations-brief")
 
     def test_schedule_by_date(self):
         day = tomorrow()

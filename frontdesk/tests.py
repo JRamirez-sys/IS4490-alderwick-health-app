@@ -8,6 +8,7 @@ from django.utils import timezone
 from audit.models import AuditLog
 from clinic import gemini
 from clinic.models import Appointment, AppointmentRequest, Message, MessageThread, Patient, Problem
+from clinic.operations_brief import operations_brief_session_key
 from clinic.services import available_slots
 from clinic.testing import (
     local_dt,
@@ -94,6 +95,51 @@ class DashboardTests(FrontDeskTestCase):
         self.assertContains(response, reverse("frontdesk:operations_brief"))
         self.assertNotContains(response, 'data-generate-operations-brief')
 
+    def test_operations_calendar_shows_assigned_office_appointments(self):
+        appointment = make_appointment(
+            patient=self.patient,
+            provider=self.provider,
+            start=local_dt(timezone.localdate(), 10),
+        )
+        other_provider = make_provider()
+        other_patient = make_patient(provider=other_provider, first_name="Other", last_name="Location")
+        make_appointment(
+            patient=other_patient,
+            provider=other_provider,
+            start=local_dt(timezone.localdate(), 11),
+        )
+
+        response = self.client.get(reverse("frontdesk:operations_brief"))
+
+        self.assertIn(appointment, response.context["operations_calendar_days"][0]["appointments"])
+        self.assertContains(response, self.patient.full_name)
+        self.assertNotContains(response, other_patient.full_name)
+
+    def test_existing_brief_session_without_new_summary_fields_still_loads(self):
+        session = self.client.session
+        session[operations_brief_session_key(self.staff)] = {
+            "items": [
+                {
+                    "key": "front_office_replies",
+                    "label": "Patient messages",
+                    "count": 1,
+                    "over_24h": 0,
+                    "oldest_age_hours": 1,
+                    "unread_count": 1,
+                    "url": reverse("frontdesk:messages"),
+                }
+            ],
+            "error": "",
+            "ai_prioritized": True,
+        }
+        session.save()
+
+        response = self.client.get(reverse("frontdesk:operations_brief"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Patient messages")
+        self.assertNotContains(response, "AI-generated overview")
+
     @mock.patch(
         "frontdesk.views.get_operations_tasks",
         return_value=[
@@ -106,22 +152,39 @@ class DashboardTests(FrontDeskTestCase):
             }
         ],
     )
+    @mock.patch("frontdesk.views.generate_operations_summary", return_value="One appointment this week.")
     @mock.patch(
         "frontdesk.views.prioritize_operations_tasks",
         side_effect=lambda tasks, role: tasks,
     )
-    def test_operations_brief_generates_and_links_task_queues(self, prioritize, get_tasks):
-        response = self.client.post(
+    def test_operations_brief_generates_and_links_task_queues(self, prioritize, generate_summary, get_tasks):
+        post_response = self.client.post(
             reverse("frontdesk:operations_brief"),
             {"action": "generate_operations_brief"},
         )
 
+        self.assertRedirects(post_response, reverse("frontdesk:operations_brief"))
+        response = self.client.get(reverse("frontdesk:operations_brief"))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["operations_brief"][0]["url"], reverse("frontdesk:requests") + "?status=open")
         self.assertContains(response, "AI-prioritized")
-        self.assertContains(response, "data-close-operations-brief")
+        self.assertContains(response, "One appointment this week.")
+        self.assertContains(response, "data-clear-operations-brief")
+        self.assertContains(response, "Saved for this signed-in session")
         get_tasks.assert_called_once_with(self.staff.role)
         prioritize.assert_called_once()
+        generate_summary.assert_called_once()
+
+        self.client.get(reverse("frontdesk:dashboard"))
+        self.assertContains(self.client.get(reverse("frontdesk:operations_brief")), "AI-prioritized")
+
+        clear_response = self.client.post(
+            reverse("frontdesk:operations_brief"),
+            {"action": "clear_operations_brief"},
+        )
+        self.assertRedirects(clear_response, reverse("frontdesk:operations_brief"))
+        response = self.client.get(reverse("frontdesk:operations_brief"))
+        self.assertNotContains(response, "data-clear-operations-brief")
 
     def test_operations_brief_tab_is_active_and_close_is_not_shown_until_generated(self):
         response = self.client.get(reverse("frontdesk:operations_brief"))
@@ -129,24 +192,27 @@ class DashboardTests(FrontDeskTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "class=\"nav-item active\" href=\"/staff/front-office/operations-brief/\"")
         self.assertContains(response, "data-generate-operations-brief")
-        self.assertNotContains(response, "data-close-operations-brief")
+        self.assertNotContains(response, "data-clear-operations-brief")
 
     @mock.patch(
         "frontdesk.views.prioritize_operations_tasks",
         side_effect=gemini.GeminiError("Gemini is not configured."),
     )
-    def test_operations_brief_shows_counts_if_ai_prioritization_is_unavailable(self, prioritize):
+    @mock.patch("frontdesk.views.generate_operations_summary", return_value="")
+    def test_operations_brief_shows_counts_if_ai_prioritization_is_unavailable(self, generate_summary, prioritize):
         self.new_request()
         make_thread(patient=self.patient, category=MessageThread.Category.APPOINTMENTS)
 
-        response = self.client.post(
+        post_response = self.client.post(
             reverse("frontdesk:operations_brief"),
             {"action": "generate_operations_brief"},
         )
 
+        self.assertRedirects(post_response, reverse("frontdesk:operations_brief"))
+        response = self.client.get(reverse("frontdesk:operations_brief"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Queue snapshot")
-        self.assertContains(response, "data-close-operations-brief")
+        self.assertContains(response, "data-clear-operations-brief")
         self.assertContains(response, "1 new")
         self.assertContains(response, "0 under review")
         self.assertContains(response, "1 unread")

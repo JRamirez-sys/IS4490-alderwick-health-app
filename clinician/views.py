@@ -14,7 +14,14 @@ from accounts.models import User
 from audit.models import AuditLog
 from audit.utils import log_event
 from clinic import gemini
-from clinic.operations_brief import get_operations_tasks, prioritize_operations_tasks
+from clinic.operations_brief import (
+    generate_operations_summary,
+    get_operations_calendar,
+    get_recent_operations_changes,
+    get_operations_tasks,
+    operations_brief_session_key,
+    prioritize_operations_tasks,
+)
 from clinic.models import Appointment, LabResult, Message, MessageThread, Patient, Provider, Visit
 from clinic.services import patients_for_provider, provider_can_view_patient, reply_to_thread
 
@@ -46,27 +53,62 @@ def _day_bounds(day):
 @require_http_methods(["GET", "POST"])
 def dashboard(request):
     provider = current_provider(request)
-    operations_brief = None
-    operations_brief_error = ""
+    session_key = operations_brief_session_key(request.user)
     if request.method == "POST":
-        if request.POST.get("action") != "generate_operations_brief":
+        action = request.POST.get("action")
+        if action == "clear_operations_brief":
+            request.session.pop(session_key, None)
+            return redirect("clinician:dashboard")
+        if action != "generate_operations_brief":
             return HttpResponseBadRequest("Unsupported dashboard action.")
         operations_brief = get_operations_tasks(request.user.role, provider=provider)
+        operations_brief_error = ""
         try:
             operations_brief = prioritize_operations_tasks(operations_brief, request.user.role)
-            operations_brief_ai_prioritized = True
+            operations_brief_ai_prioritized = bool(operations_brief)
         except gemini.GeminiError:
             operations_brief_ai_prioritized = False
             operations_brief_error = (
                 "AI prioritization is unavailable. Showing current queue counts without AI ranking."
+            )
+        calendar = get_operations_calendar(provider=provider)
+        changes = get_recent_operations_changes()
+        operations_brief_summary = ""
+        operations_summary_error = ""
+        try:
+            operations_brief_summary = generate_operations_summary(
+                operations_brief,
+                calendar["summary"],
+                changes["counts"],
+                request.user.role,
+            )
+        except gemini.GeminiError:
+            operations_summary_error = (
+                "AI summary is unavailable. The appointment calendar and recorded changes are still shown."
             )
         for item in operations_brief:
             item["url"] = {
                 "unsigned_notes": "#notes",
                 "clinical_replies": reverse("clinician:inbox") + "?status=open",
             }[item["key"]]
+        request.session[session_key] = {
+            "items": operations_brief,
+            "error": operations_brief_error,
+            "ai_prioritized": operations_brief_ai_prioritized,
+            "summary": operations_brief_summary,
+            "summary_error": operations_summary_error,
+            "changes": changes["events"],
+            "changes_truncated": changes["truncated"],
+        }
+        return redirect("clinician:dashboard")
 
+    saved_brief = request.session.get(session_key)
+    operations_brief = saved_brief.get("items") if saved_brief is not None else None
     today = timezone.localdate()
+    calendar = get_operations_calendar(provider=provider)
+    for day in calendar["days"]:
+        for appointment in day["appointments"]:
+            appointment.patient_url = reverse("clinician:chart", args=[appointment.patient_id])
     start, end = _day_bounds(today)
     todays = (
         provider.appointments.filter(start__gte=start, start__lt=end)
@@ -100,10 +142,20 @@ def dashboard(request):
         "panel_size": my_patients.count(),
         "now": timezone.now(),
         "operations_brief": operations_brief,
-        "operations_brief_error": operations_brief_error,
+        "operations_brief_error": saved_brief.get("error", "") if saved_brief is not None else "",
         "operations_brief_ai_prioritized": (
-            operations_brief_ai_prioritized if request.method == "POST" else False
+            saved_brief.get("ai_prioritized", False) if saved_brief is not None else False
         ),
+        "operations_brief_saved": saved_brief is not None,
+        "operations_brief_summary": saved_brief.get("summary", "") if saved_brief is not None else "",
+        "operations_summary_error": (
+            saved_brief.get("summary_error", "") if saved_brief is not None else ""
+        ),
+        "operations_changes": saved_brief.get("changes", []) if saved_brief is not None else [],
+        "operations_changes_truncated": (
+            saved_brief.get("changes_truncated", False) if saved_brief is not None else False
+        ),
+        "operations_calendar_days": calendar["days"],
     }
     return render(request, "clinician/dashboard.html", context)
 
