@@ -1,7 +1,11 @@
 from django.contrib.auth import views as auth_views
 from django.contrib.auth.decorators import login_required
+from django.contrib import messages
+from django.utils.html import format_html
 from django.shortcuts import redirect
+from django.urls import reverse
 
+from .models import User
 from .forms import SignInForm
 
 
@@ -9,6 +13,20 @@ class SignInView(auth_views.LoginView):
     template_name = "accounts/login.html"
     authentication_form = SignInForm
     redirect_authenticated_user = True
+
+    def form_valid(self, form):
+        response = super().form_valid(form)
+        if self.request.user.role in (User.Role.FRONT_OFFICE, User.Role.DOCTOR):
+            assistant_url = reverse("clinic:staff_assistant")
+            messages.info(
+                self.request,
+                format_html(
+                    "<strong>New: Policy assistant.</strong> Ask questions about published practice policies "
+                    "or draft a response for staff review. <a href='{}'>See what it can do</a>.",
+                    assistant_url,
+                ),
+            )
+        return response
 
 
 class SignOutView(auth_views.LogoutView):

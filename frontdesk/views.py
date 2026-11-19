@@ -3,19 +3,31 @@ import datetime
 from django.contrib import messages
 from django.core.paginator import Paginator
 from django.db.models import Q
+from django.http import HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import dateformat, timezone
 from django.utils.http import url_has_allowed_host_and_scheme
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_http_methods, require_POST
 
 from accounts.decorators import role_required
 from accounts.models import User
 from audit.models import AuditLog
 from audit.utils import log_event
+from clinic import gemini
+from clinic.operations_brief import (
+    generate_operations_summary,
+    get_operations_calendar,
+    get_recent_operations_changes,
+    get_operations_tasks,
+    operations_brief_session_key,
+    prioritize_operations_tasks,
+)
 from clinic.models import (
     Appointment,
     AppointmentRequest,
     AppointmentType,
+    Message,
     MessageThread,
     Office,
     Patient,
@@ -60,6 +72,82 @@ def dashboard(request):
         "recent_threads": threads.select_related("patient")[:6],
     }
     return render(request, "frontdesk/dashboard.html", context)
+
+
+@front_office_required
+@require_http_methods(["GET", "POST"])
+def operations_brief(request):
+    session_key = operations_brief_session_key(request.user)
+    if request.method == "POST":
+        action = request.POST.get("action")
+        if action == "clear_operations_brief":
+            request.session.pop(session_key, None)
+            return redirect("frontdesk:operations_brief")
+        if action != "generate_operations_brief":
+            return HttpResponseBadRequest("Unsupported brief action.")
+        brief = get_operations_tasks(request.user.role)
+        brief_error = ""
+        ai_prioritized = False
+        try:
+            brief = prioritize_operations_tasks(brief, request.user.role)
+            ai_prioritized = bool(brief)
+        except gemini.GeminiError:
+            brief_error = "AI prioritization is unavailable. Showing current queue counts without AI ranking."
+        for item in brief:
+            item["url"] = {
+                "appointment_requests": f'{reverse("frontdesk:requests")}?status=open',
+                "front_office_replies": reverse("frontdesk:messages"),
+            }[item["key"]]
+        calendar = get_operations_calendar(office=request.user.office)
+        changes = get_recent_operations_changes()
+        summary = ""
+        summary_error = ""
+        try:
+            summary = generate_operations_summary(
+                brief,
+                calendar["summary"],
+                changes["counts"],
+                request.user.role,
+            )
+        except gemini.GeminiError:
+            summary_error = "AI summary is unavailable. The appointment calendar and recorded changes are still shown."
+        request.session[session_key] = {
+            "items": brief,
+            "error": brief_error,
+            "ai_prioritized": ai_prioritized,
+            "summary": summary,
+            "summary_error": summary_error,
+            "changes": changes["events"],
+            "changes_truncated": changes["truncated"],
+        }
+        return redirect("frontdesk:operations_brief")
+
+    saved_brief = request.session.get(session_key)
+    calendar = get_operations_calendar(office=request.user.office)
+    for day in calendar["days"]:
+        for appointment in day["appointments"]:
+            appointment.patient_url = reverse("frontdesk:patient_detail", args=[appointment.patient_id])
+    return render(
+        request,
+        "frontdesk/operations_brief.html",
+        {
+            "operations_brief": saved_brief.get("items") if saved_brief is not None else None,
+            "operations_brief_error": saved_brief.get("error", "") if saved_brief is not None else "",
+            "operations_brief_ai_prioritized": (
+                saved_brief.get("ai_prioritized", False) if saved_brief is not None else False
+            ),
+            "operations_brief_saved": saved_brief is not None,
+            "operations_brief_summary": saved_brief.get("summary", "") if saved_brief is not None else "",
+            "operations_summary_error": (
+                saved_brief.get("summary_error", "") if saved_brief is not None else ""
+            ),
+            "operations_changes": saved_brief.get("changes", []) if saved_brief is not None else [],
+            "operations_changes_truncated": (
+                saved_brief.get("changes_truncated", False) if saved_brief is not None else False
+            ),
+            "operations_calendar_days": calendar["days"],
+        },
+    )
 
 
 @front_office_required
@@ -111,6 +199,62 @@ def request_detail(request, pk):
         "notes_form": StaffNotesForm(initial={"staff_notes": appointment_request.staff_notes}),
         "decline_form": DeclineForm(),
         "new_patient_form": NewPatientDetailsForm(),
+    }
+    if appointment_request.is_open:
+        context.update(
+            slot_picker_context(
+                request.GET,
+                default_provider=appointment_request.preferred_provider,
+                patient_plan=appointment_request.insurance_plan,
+            )
+        )
+    return render(request, "frontdesk/request_detail.html", context)
+
+
+@front_office_required
+@require_POST
+def translate_request(request, pk):
+    appointment_request = get_object_or_404(AppointmentRequest, pk=pk)
+    texts = [
+        ("reason", "Reason for visit", appointment_request.reason),
+        ("preferred_times", "Preferred availability", appointment_request.preferred_times),
+        ("insurance_other", "Other insurance", appointment_request.insurance_other),
+    ]
+    fields_to_translate = [(key, label, text) for key, label, text in texts if text.strip()]
+    if not fields_to_translate:
+        messages.error(request, "There is no patient-entered request text to translate.")
+        return redirect("frontdesk:request_detail", pk=appointment_request.pk)
+
+    try:
+        translated_texts = gemini.translate_text_batch(
+            [text for _, _, text in fields_to_translate],
+            "English",
+            actor_role=request.user.role,
+            operation="appointment_request_translation",
+        )
+    except gemini.TranslationUnavailableError as exc:
+        messages.error(request, str(exc))
+        return redirect("frontdesk:request_detail", pk=appointment_request.pk)
+    except gemini.GeminiError:
+        messages.error(request, "The translation service is unavailable. The original request is unchanged.")
+        return redirect("frontdesk:request_detail", pk=appointment_request.pk)
+
+    log_event(
+        request,
+        AuditLog.Action.TRANSLATE_APPOINTMENT_REQUEST,
+        patient=appointment_request.patient,
+        target=appointment_request,
+    )
+    context = {
+        "req": appointment_request,
+        "matches": [],
+        "notes_form": StaffNotesForm(initial={"staff_notes": appointment_request.staff_notes}),
+        "decline_form": DeclineForm(),
+        "new_patient_form": NewPatientDetailsForm(),
+        "request_translations": [
+            {"label": label, "text": translated}
+            for (_, label, _), translated in zip(fields_to_translate, translated_texts, strict=True)
+        ],
     }
     if appointment_request.is_open:
         context.update(
@@ -344,7 +488,55 @@ def thread_detail(request, pk):
     return render(
         request,
         "frontdesk/thread.html",
-        {"thread": thread, "thread_messages": thread.messages.all(), "form": form},
+        {
+            "thread": thread,
+            "thread_messages": thread.messages.all(),
+            "form": form,
+            "translation_url_name": "frontdesk:translate_message",
+        },
+    )
+
+
+@front_office_required
+@require_POST
+def translate_message(request, pk, message_pk):
+    thread = get_object_or_404(
+        MessageThread.objects.select_related("patient"),
+        pk=pk,
+        queue=MessageThread.Queue.FRONT_OFFICE,
+    )
+    message = get_object_or_404(Message, pk=message_pk, thread=thread, from_patient=True)
+
+    try:
+        translation = gemini.translate_to_english(message.body, actor_role=request.user.role)
+    except gemini.TranslationUnavailableError as exc:
+        messages.error(request, str(exc))
+        return redirect("frontdesk:thread", pk=thread.pk)
+    except gemini.GeminiError:
+        messages.error(request, "The translation service is unavailable. The original message is unchanged.")
+        return redirect("frontdesk:thread", pk=thread.pk)
+
+    if not translation:
+        messages.error(request, "No translation was returned. The original message is unchanged.")
+        return redirect("frontdesk:thread", pk=thread.pk)
+
+    log_event(
+        request,
+        AuditLog.Action.TRANSLATE_MESSAGE,
+        patient=thread.patient,
+        target=message,
+    )
+    return render(
+        request,
+        "frontdesk/thread.html",
+        {
+            "thread": thread,
+            "thread_messages": thread.messages.all(),
+            "form": ReplyForm(),
+            "translation": translation,
+            "translated_message_id": message.pk,
+            "translation_url_name": "frontdesk:translate_message",
+        },
     )
 
 

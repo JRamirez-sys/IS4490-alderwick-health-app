@@ -1,0 +1,84 @@
+{% extends "layouts/staff.html" %}
+{% load static %}
+{% block title %}Medicine lookup | Alderwick Family Health{% endblock %}
+{% block workspace_name %}{% if user.is_doctor %}Clinician{% else %}Front Office{% endif %}{% endblock %}
+{% block sidebar %}
+{% if user.is_doctor %}
+<div class="nav-label">My work</div>
+<a class="nav-item" href="{% url 'clinician:dashboard' %}">Today</a>
+<a class="nav-item" href="{% url 'clinician:schedule' %}">Schedule</a>
+<a class="nav-item" href="{% url 'clinician:patients' %}">My patients</a>
+<a class="nav-item" href="{% url 'clinician:inbox' %}">Patient messages</a>
+<div class="nav-label">Reference</div>
+<a class="nav-item" href="{% url 'clinic:staff_assistant' %}"><span class="ai-nav-content">{% include "includes/ai_sparkle.html" %}Policy assistant</span><span class="ai-badge">AI</span></a>
+<a class="nav-item active" href="{% url 'clinic:medicine_lookup' %}"><span class="ai-nav-content">{% include "includes/ai_sparkle.html" %}Medicine lookup</span><span class="ai-badge">AI</span></a>
+<a class="nav-item" href="{% url 'public:resource_list' %}" target="_blank" rel="noopener">Practice policies</a>
+{% else %}
+<div class="nav-label">Front office</div>
+<a class="nav-item" href="{% url 'frontdesk:dashboard' %}">Dashboard</a>
+<a class="nav-item" href="{% url 'frontdesk:operations_brief' %}">Operations brief <span class="ai-badge">AI</span></a>
+<a class="nav-item" href="{% url 'frontdesk:requests' %}">Appointment requests</a>
+<a class="nav-item" href="{% url 'frontdesk:schedule' %}">Schedule</a>
+<a class="nav-item" href="{% url 'frontdesk:messages' %}">Patient messages</a>
+<a class="nav-item" href="{% url 'frontdesk:patient_search' %}">Patient lookup</a>
+<a class="nav-item" href="{% url 'clinic:staff_assistant' %}"><span class="ai-nav-content">{% include "includes/ai_sparkle.html" %}Policy assistant</span><span class="ai-badge">AI</span></a>
+<a class="nav-item active" href="{% url 'clinic:medicine_lookup' %}"><span class="ai-nav-content">{% include "includes/ai_sparkle.html" %}Medicine lookup</span><span class="ai-badge">AI</span></a>
+<div class="nav-label">Practice</div>
+<a class="nav-item" href="{% url 'public:resource_list' %}" target="_blank" rel="noopener">Policies and FAQ</a>
+{% endif %}
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Medicine lookup</h1>
+    <p>Find general medication information with links to trusted public sources.</p>
+  </div>
+</div>
+<section class="card assistant-card medicine-lookup-card" aria-labelledby="medicine-lookup-title">
+  <div class="card-header">
+    <div class="assistant-heading">
+      <h2 id="medicine-lookup-title">Look up a medicine</h2>
+      <p class="muted">Search FDA, DailyMed, MedlinePlus, and NIH sources.</p>
+    </div>
+  </div>
+  <form id="medicine-lookup-form" class="assistant-form" data-endpoint="{% url 'clinic:medicine_lookup_search' %}">
+    {% csrf_token %}
+    <p class="medicine-lookup-disclaimer">
+      General information only, not medical advice. Enter only a medicine name—never patient names,
+      identifiers, symptoms, or other patient details. For patient-specific questions, consult a clinician
+      or pharmacist. For emergencies, follow your clinic’s emergency procedures.
+    </p>
+    <div class="field">
+      <label for="medicine-lookup-input">Medicine name</label>
+      <input class="input" id="medicine-lookup-input" name="medicine" type="text" maxlength="120" required
+        autocomplete="off" placeholder="For example, metformin">
+    </div>
+    <div class="assistant-form-footer">
+      <span id="medicine-lookup-status" class="muted" role="status"></span>
+      <button id="medicine-lookup-submit" class="btn" type="submit">
+        Search medicines
+      </button>
+    </div>
+  </form>
+  <div id="medicine-lookup-result" class="medicine-lookup-result" role="region" aria-live="polite" aria-label="Medicine lookup result" hidden></div>
+  {% if user.is_doctor %}
+  <section id="medicine-allergy-check" class="medicine-allergy-check" data-endpoint="{% url 'clinic:medicine_lookup_allergy_matches' %}" aria-labelledby="medicine-allergy-title" hidden>
+    <h3 id="medicine-allergy-title">Check recorded allergies in my patient panel</h3>
+    <p class="medicine-allergy-disclaimer">
+      This performs an exact, case-insensitive match against your authorized patients’ recorded allergy names.
+      It does not infer brand/generic equivalents, and no patient data is sent to Gemini. A missing match does
+      not confirm that a patient has no allergy; review the chart before making clinical decisions.
+    </p>
+    <form id="medicine-allergy-form">
+      {% csrf_token %}
+      <div class="assistant-form-footer">
+        <span id="medicine-allergy-status" class="muted" role="status"></span>
+        <button id="medicine-allergy-submit" class="btn btn-secondary" type="submit">Check allergy records</button>
+      </div>
+    </form>
+    <div id="medicine-allergy-results" class="medicine-allergy-results" role="region" aria-live="polite" aria-label="Recorded allergy matches"></div>
+  </section>
+  {% endif %}
+</section>
+<script src="{% static 'js/medicine_lookup.js' %}" defer></script>
+{% endblock %}

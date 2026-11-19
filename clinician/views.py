@@ -3,15 +3,26 @@ import datetime
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.db.models import Q
-from django.http import Http404
+from django.http import Http404, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
+from django.views.decorators.http import require_http_methods, require_POST
 
 from accounts.decorators import role_required
 from accounts.models import User
 from audit.models import AuditLog
 from audit.utils import log_event
-from clinic.models import Appointment, LabResult, MessageThread, Patient, Provider, Visit
+from clinic import gemini
+from clinic.operations_brief import (
+    generate_operations_summary,
+    get_operations_calendar,
+    get_recent_operations_changes,
+    get_operations_tasks,
+    operations_brief_session_key,
+    prioritize_operations_tasks,
+)
+from clinic.models import Appointment, LabResult, Message, MessageThread, Patient, Provider, Visit
 from clinic.services import patients_for_provider, provider_can_view_patient, reply_to_thread
 
 from .forms import ReplyForm, VisitNoteForm
@@ -39,9 +50,65 @@ def _day_bounds(day):
 
 
 @doctor_required
+@require_http_methods(["GET", "POST"])
 def dashboard(request):
     provider = current_provider(request)
+    session_key = operations_brief_session_key(request.user)
+    if request.method == "POST":
+        action = request.POST.get("action")
+        if action == "clear_operations_brief":
+            request.session.pop(session_key, None)
+            return redirect("clinician:dashboard")
+        if action != "generate_operations_brief":
+            return HttpResponseBadRequest("Unsupported dashboard action.")
+        operations_brief = get_operations_tasks(request.user.role, provider=provider)
+        operations_brief_error = ""
+        try:
+            operations_brief = prioritize_operations_tasks(operations_brief, request.user.role)
+            operations_brief_ai_prioritized = bool(operations_brief)
+        except gemini.GeminiError:
+            operations_brief_ai_prioritized = False
+            operations_brief_error = (
+                "AI prioritization is unavailable. Showing current queue counts without AI ranking."
+            )
+        calendar = get_operations_calendar(provider=provider)
+        changes = get_recent_operations_changes()
+        operations_brief_summary = ""
+        operations_summary_error = ""
+        try:
+            operations_brief_summary = generate_operations_summary(
+                operations_brief,
+                calendar["summary"],
+                changes["counts"],
+                request.user.role,
+            )
+        except gemini.GeminiError:
+            operations_summary_error = (
+                "AI summary is unavailable. The appointment calendar and recorded changes are still shown."
+            )
+        for item in operations_brief:
+            item["url"] = {
+                "unsigned_notes": "#notes",
+                "clinical_replies": reverse("clinician:inbox") + "?status=open",
+            }[item["key"]]
+        request.session[session_key] = {
+            "items": operations_brief,
+            "error": operations_brief_error,
+            "ai_prioritized": operations_brief_ai_prioritized,
+            "summary": operations_brief_summary,
+            "summary_error": operations_summary_error,
+            "changes": changes["events"],
+            "changes_truncated": changes["truncated"],
+        }
+        return redirect("clinician:dashboard")
+
+    saved_brief = request.session.get(session_key)
+    operations_brief = saved_brief.get("items") if saved_brief is not None else None
     today = timezone.localdate()
+    calendar = get_operations_calendar(provider=provider)
+    for day in calendar["days"]:
+        for appointment in day["appointments"]:
+            appointment.patient_url = reverse("clinician:chart", args=[appointment.patient_id])
     start, end = _day_bounds(today)
     todays = (
         provider.appointments.filter(start__gte=start, start__lt=end)
@@ -74,6 +141,21 @@ def dashboard(request):
         "abnormal_labs": abnormal_labs,
         "panel_size": my_patients.count(),
         "now": timezone.now(),
+        "operations_brief": operations_brief,
+        "operations_brief_error": saved_brief.get("error", "") if saved_brief is not None else "",
+        "operations_brief_ai_prioritized": (
+            saved_brief.get("ai_prioritized", False) if saved_brief is not None else False
+        ),
+        "operations_brief_saved": saved_brief is not None,
+        "operations_brief_summary": saved_brief.get("summary", "") if saved_brief is not None else "",
+        "operations_summary_error": (
+            saved_brief.get("summary_error", "") if saved_brief is not None else ""
+        ),
+        "operations_changes": saved_brief.get("changes", []) if saved_brief is not None else [],
+        "operations_changes_truncated": (
+            saved_brief.get("changes_truncated", False) if saved_brief is not None else False
+        ),
+        "operations_calendar_days": calendar["days"],
     }
     return render(request, "clinician/dashboard.html", context)
 
@@ -279,5 +361,56 @@ def thread_detail(request, pk):
         "medications": thread.patient.medications.filter(is_active=True),
         "problems": thread.patient.problems.filter(status="active"),
         "recent_labs": thread.patient.lab_results.all()[:6],
+        "translation_url_name": "clinician:translate_message",
     }
     return render(request, "clinician/thread.html", context)
+
+
+@doctor_required
+@require_POST
+def translate_message(request, pk, message_pk):
+    provider = current_provider(request)
+    thread = get_object_or_404(
+        MessageThread.objects.select_related("patient"),
+        pk=pk,
+        queue=MessageThread.Queue.CLINICAL,
+        assigned_provider=provider,
+    )
+    message = get_object_or_404(Message, pk=message_pk, thread=thread, from_patient=True)
+
+    try:
+        translation = gemini.translate_to_english(message.body, actor_role=request.user.role)
+    except gemini.TranslationUnavailableError as exc:
+        messages.error(request, str(exc))
+        return redirect("clinician:thread", pk=thread.pk)
+    except gemini.GeminiError:
+        messages.error(request, "The translation service is unavailable. The original message is unchanged.")
+        return redirect("clinician:thread", pk=thread.pk)
+
+    if not translation:
+        messages.error(request, "No translation was returned. The original message is unchanged.")
+        return redirect("clinician:thread", pk=thread.pk)
+
+    log_event(
+        request,
+        AuditLog.Action.TRANSLATE_MESSAGE,
+        patient=thread.patient,
+        target=message,
+    )
+    return render(
+        request,
+        "clinician/thread.html",
+        {
+            "provider": provider,
+            "thread": thread,
+            "thread_messages": thread.messages.all(),
+            "form": ReplyForm(),
+            "patient": thread.patient,
+            "medications": thread.patient.medications.filter(is_active=True),
+            "problems": thread.patient.problems.filter(status="active"),
+            "recent_labs": thread.patient.lab_results.all()[:6],
+            "translation": translation,
+            "translated_message_id": message.pk,
+            "translation_url_name": "clinician:translate_message",
+        },
+    )

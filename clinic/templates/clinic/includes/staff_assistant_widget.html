@@ -1,0 +1,42 @@
+{% load static %}
+<section class="card assistant-card" aria-labelledby="assistant-title">
+  <div class="card-header">
+    <div class="assistant-heading">
+      <h2 id="assistant-title">Policy assistant</h2>
+      <p class="muted">Ask about published practice policies or draft a response for review.</p>
+    </div>
+  </div>
+  <div id="assistant-messages" class="assistant-messages" role="log" aria-live="polite" aria-relevant="additions">
+    <div class="assistant-message assistant-message-bot assistant-welcome">
+      <strong>How can I help?</strong>
+      <p>Ask a policy question or draft a staff response. I’ll use published practice policies and link to the sources.</p>
+    </div>
+  </div>
+  <form id="assistant-form" class="assistant-form" data-endpoint="{% url 'clinic:staff_assistant_chat' %}">
+    {% csrf_token %}
+    <div class="field assistant-mode-field">
+      <label for="assistant-mode">Task</label>
+      <select class="input" id="assistant-mode" name="mode">
+        <option value="answer">Ask a policy or workflow question</option>
+        <option value="draft">Draft a response for review</option>
+      </select>
+    </div>
+    <div class="assistant-composer">
+      <div class="field assistant-message-field">
+        <label for="assistant-input">Question or draft context</label>
+        <textarea class="input" id="assistant-input" name="message" rows="3" maxlength="4000" required
+          placeholder="Type a policy question or de-identified context…"></textarea>
+      </div>
+      <div class="assistant-form-footer">
+        <span id="assistant-status" class="muted" role="status"></span>
+        <button id="assistant-submit" class="btn" type="submit">
+          Send
+          <svg aria-hidden="true" viewBox="0 0 20 20" fill="none">
+            <path d="M3 10h13m-5-5 5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </form>
+</section>
+<script src="{% static 'js/staff_assistant.js' %}" defer></script>

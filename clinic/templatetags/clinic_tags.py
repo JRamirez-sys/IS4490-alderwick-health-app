@@ -18,6 +18,8 @@ BADGE_CLASSES = {
     # visit / thread status
     "draft": "badge-warning",
     "signed": "badge-success",
+    "succeeded": "badge-success",
+    "failed": "badge-danger",
     "open": "badge-info",
     "closed": "badge-muted",
     # labs / problems / allergies

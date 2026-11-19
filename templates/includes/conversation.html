@@ -3,6 +3,21 @@
   <div class="bubble {% if m.from_patient %}from-patient{% else %}from-practice{% endif %}">
     <div class="meta">{{ m.sender_name }} &middot; {{ m.created_at|date:"M j, Y g:i A" }}</div>
     <p>{{ m.body }}</p>
+    {% if translation_url_name %}
+    {% if m.from_patient or translate_all_messages %}
+    <form method="post" action="{% url translation_url_name thread.pk m.pk %}" class="form-actions">
+      {% csrf_token %}
+      <button class="btn btn-secondary btn-sm" type="submit">Translate with AI</button>
+    </form>
+    {% endif %}
+    {% if translated_message_id == m.pk %}
+    <div class="alert alert-info" role="status">
+      <strong>{% if translation_target_language %}AI-generated {{ translation_target_language }} translation{% else %}AI-generated English translation{% endif %}</strong>
+      <p>{{ translation|linebreaksbr }}</p>
+      <small>{{ translation_note|default:"Review the translation for accuracy before replying." }}</small>
+    </div>
+    {% endif %}
+    {% endif %}
   </div>
   {% empty %}
   <div class="empty">No messages yet.</div>

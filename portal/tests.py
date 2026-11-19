@@ -1,11 +1,14 @@
 import datetime
+import json
+from unittest import mock
 
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from audit.models import AuditLog
-from clinic.models import Allergy, Appointment, AppointmentRequest, LabResult, MessageThread, Visit
+from clinic import gemini
+from clinic.models import Allergy, Appointment, AppointmentRequest, LabResult, Message, MessageThread, Visit
 from clinic.testing import (
     make_appointment,
     make_patient,
@@ -51,7 +54,64 @@ class PortalAccessTests(PortalTestCase):
         for name in ("dashboard", "appointments", "request_appointment", "health_summary", "lab_results", "visits",
                      "messages", "new_message", "profile"):
             with self.subTest(page=name):
-                self.assertEqual(self.client.get(reverse(f"portal:{name}")).status_code, 200)
+                response = self.client.get(reverse(f"portal:{name}"))
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, "Translate with AI")
+                self.assertContains(response, "portal-translation.js")
+
+
+class PortalPageTranslationTests(PortalTestCase):
+    @mock.patch(
+        "portal.views.gemini.translate_text_batch",
+        return_value=["Inicio", "Resumen de salud"],
+    )
+    def test_page_translation_uses_profile_language_and_audits_without_text(self, translate_text_batch):
+        self.patient.preferred_language = "Spanish"
+        self.patient.save(update_fields=["preferred_language"])
+        texts = ["Home", "Health summary"]
+        response = self.client.post(
+            reverse("portal:translate_page"),
+            data=json.dumps({"texts": texts, "target_language": "French"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {"translations": ["Inicio", "Resumen de salud"], "target_language": "Spanish"},
+        )
+        translate_text_batch.assert_called_once_with(
+            texts,
+            "Spanish",
+            actor_role="patient",
+            operation="portal_page_translation",
+        )
+        event = AuditLog.objects.get(action=AuditLog.Action.TRANSLATE_PORTAL_PAGE, patient=self.patient)
+        self.assertEqual(event.details, {"target_language": "Spanish", "text_segment_count": 2})
+
+    @mock.patch("portal.views.gemini.translate_text_batch", return_value=["Inicio"])
+    def test_staff_cannot_access_patient_page_translation(self, translate_text_batch):
+        self.client.force_login(make_user("doctor"))
+
+        response = self.client.post(
+            reverse("portal:translate_page"),
+            data=json.dumps({"texts": ["Home"]}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        translate_text_batch.assert_not_called()
+
+    @mock.patch("portal.views.gemini.translate_text_batch")
+    def test_page_translation_rejects_invalid_input(self, translate_text_batch):
+        response = self.client.post(
+            reverse("portal:translate_page"),
+            data=json.dumps({"texts": [""]}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        translate_text_batch.assert_not_called()
 
 
 class PortalAppointmentTests(PortalTestCase):
@@ -174,3 +234,74 @@ class PortalMessagingTests(PortalTestCase):
         self.assertEqual(self.client.get(reverse("portal:thread", args=[thread.pk])).status_code, 404)
         listing = self.client.get(reverse("portal:messages"))
         self.assertNotIn(thread, listing.context["threads"])
+
+    def test_patient_can_translate_any_message_into_preferred_language(self):
+        self.patient.preferred_language = "Spanish"
+        self.patient.save(update_fields=["preferred_language"])
+        thread = make_thread(patient=self.patient, category="clinical", body="Necesito ayuda.")
+        care_team_message = Message.objects.create(
+            thread=thread,
+            sender_name=self.provider.display_name,
+            from_patient=False,
+            body="Please call us about your test result.",
+        )
+        patient_message = thread.messages.get(from_patient=True)
+
+        page = self.client.get(reverse("portal:thread", args=[thread.pk]))
+        self.assertContains(page, "Translate with AI", count=3)
+
+        with mock.patch(
+            "portal.views.gemini.translate_to_language",
+            side_effect=["Por favor llámenos sobre su resultado.", "Necesito ayuda."],
+        ) as translate_to_language:
+            response = self.client.post(
+                reverse("portal:translate_message", args=[thread.pk, care_team_message.pk])
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, "AI-generated Spanish translation")
+            self.assertContains(response, "Por favor llámenos sobre su resultado.")
+
+            response = self.client.post(
+                reverse("portal:translate_message", args=[thread.pk, patient_message.pk])
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, "Necesito ayuda.")
+
+        translate_to_language.assert_has_calls(
+            [
+                mock.call(care_team_message.body, "Spanish", actor_role="patient"),
+                mock.call(patient_message.body, "Spanish", actor_role="patient"),
+            ]
+        )
+        care_team_message.refresh_from_db()
+        patient_message.refresh_from_db()
+        self.assertEqual(care_team_message.body, "Please call us about your test result.")
+        self.assertEqual(patient_message.body, "Necesito ayuda.")
+        self.assertEqual(
+            AuditLog.objects.filter(action=AuditLog.Action.TRANSLATE_MESSAGE, patient=self.patient).count(),
+            2,
+        )
+
+    def test_patient_cannot_translate_another_patients_message(self):
+        thread = make_thread(patient=self.other)
+        message = thread.messages.get()
+
+        response = self.client.post(
+            reverse("portal:translate_message", args=[thread.pk, message.pk])
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    @mock.patch("portal.views.gemini.translate_to_language", side_effect=gemini.GeminiError("unavailable"))
+    def test_translation_failure_keeps_message_unchanged(self, translate_to_language):
+        thread = make_thread(patient=self.patient)
+        message = thread.messages.get()
+
+        response = self.client.post(
+            reverse("portal:translate_message", args=[thread.pk, message.pk]),
+            follow=True,
+        )
+
+        self.assertContains(response, "translation service is unavailable")
+        message.refresh_from_db()
+        self.assertEqual(message.body, "Hello")

@@ -1,11 +1,14 @@
 import datetime
+from unittest import mock
 
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from audit.models import AuditLog
-from clinic.models import Appointment, AppointmentRequest, MessageThread, Patient, Problem
+from clinic import gemini
+from clinic.models import Appointment, AppointmentRequest, Message, MessageThread, Patient, Problem
+from clinic.operations_brief import operations_brief_session_key
 from clinic.services import available_slots
 from clinic.testing import (
     local_dt,
@@ -59,13 +62,15 @@ class FrontDeskAccessTests(FrontDeskTestCase):
             with self.subTest(role=role):
                 self.client.force_login(make_user(role))
                 self.assertEqual(self.client.get(reverse("frontdesk:dashboard")).status_code, 403)
+                self.assertEqual(self.client.get(reverse("frontdesk:operations_brief")).status_code, 403)
 
     def test_anonymous_redirected(self):
         self.client.logout()
         self.assertEqual(self.client.get(reverse("frontdesk:dashboard")).status_code, 302)
+        self.assertEqual(self.client.get(reverse("frontdesk:operations_brief")).status_code, 302)
 
     def test_pages_render(self):
-        for name in ("dashboard", "requests", "schedule", "messages", "patient_search"):
+        for name in ("dashboard", "operations_brief", "requests", "schedule", "messages", "patient_search"):
             with self.subTest(page=name):
                 self.assertEqual(self.client.get(reverse(f"frontdesk:{name}")).status_code, 200)
 
@@ -83,6 +88,136 @@ class DashboardTests(FrontDeskTestCase):
         self.assertEqual(counts["unread_messages"], 1)
         self.assertEqual(counts["todays_appointments"], 1)
         self.assertEqual(counts["checked_in"], 1)
+
+    def test_dashboard_links_to_separate_operations_brief(self):
+        response = self.client.get(reverse("frontdesk:dashboard"))
+
+        self.assertContains(response, reverse("frontdesk:operations_brief"))
+        self.assertNotContains(response, 'data-generate-operations-brief')
+
+    def test_operations_calendar_shows_assigned_office_appointments(self):
+        appointment = make_appointment(
+            patient=self.patient,
+            provider=self.provider,
+            start=local_dt(timezone.localdate(), 10),
+        )
+        other_provider = make_provider()
+        other_patient = make_patient(provider=other_provider, first_name="Other", last_name="Location")
+        make_appointment(
+            patient=other_patient,
+            provider=other_provider,
+            start=local_dt(timezone.localdate(), 11),
+        )
+
+        response = self.client.get(reverse("frontdesk:operations_brief"))
+
+        self.assertIn(appointment, response.context["operations_calendar_days"][0]["appointments"])
+        self.assertContains(response, self.patient.full_name)
+        self.assertNotContains(response, other_patient.full_name)
+
+    def test_existing_brief_session_without_new_summary_fields_still_loads(self):
+        session = self.client.session
+        session[operations_brief_session_key(self.staff)] = {
+            "items": [
+                {
+                    "key": "front_office_replies",
+                    "label": "Patient messages",
+                    "count": 1,
+                    "over_24h": 0,
+                    "oldest_age_hours": 1,
+                    "unread_count": 1,
+                    "url": reverse("frontdesk:messages"),
+                }
+            ],
+            "error": "",
+            "ai_prioritized": True,
+        }
+        session.save()
+
+        response = self.client.get(reverse("frontdesk:operations_brief"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Patient messages")
+        self.assertNotContains(response, "AI-generated overview")
+
+    @mock.patch(
+        "frontdesk.views.get_operations_tasks",
+        return_value=[
+            {
+                "key": "appointment_requests",
+                "label": "Open appointment requests",
+                "count": 2,
+                "over_24h": 1,
+                "oldest_age_hours": 36,
+            }
+        ],
+    )
+    @mock.patch("frontdesk.views.generate_operations_summary", return_value="One appointment this week.")
+    @mock.patch(
+        "frontdesk.views.prioritize_operations_tasks",
+        side_effect=lambda tasks, role: tasks,
+    )
+    def test_operations_brief_generates_and_links_task_queues(self, prioritize, generate_summary, get_tasks):
+        post_response = self.client.post(
+            reverse("frontdesk:operations_brief"),
+            {"action": "generate_operations_brief"},
+        )
+
+        self.assertRedirects(post_response, reverse("frontdesk:operations_brief"))
+        response = self.client.get(reverse("frontdesk:operations_brief"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["operations_brief"][0]["url"], reverse("frontdesk:requests") + "?status=open")
+        self.assertContains(response, "AI-prioritized")
+        self.assertContains(response, "One appointment this week.")
+        self.assertContains(response, "data-clear-operations-brief")
+        self.assertContains(response, "Saved for this signed-in session")
+        get_tasks.assert_called_once_with(self.staff.role)
+        prioritize.assert_called_once()
+        generate_summary.assert_called_once()
+
+        self.client.get(reverse("frontdesk:dashboard"))
+        self.assertContains(self.client.get(reverse("frontdesk:operations_brief")), "AI-prioritized")
+
+        clear_response = self.client.post(
+            reverse("frontdesk:operations_brief"),
+            {"action": "clear_operations_brief"},
+        )
+        self.assertRedirects(clear_response, reverse("frontdesk:operations_brief"))
+        response = self.client.get(reverse("frontdesk:operations_brief"))
+        self.assertNotContains(response, "data-clear-operations-brief")
+
+    def test_operations_brief_tab_is_active_and_close_is_not_shown_until_generated(self):
+        response = self.client.get(reverse("frontdesk:operations_brief"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "class=\"nav-item active\" href=\"/staff/front-office/operations-brief/\"")
+        self.assertContains(response, "data-generate-operations-brief")
+        self.assertNotContains(response, "data-clear-operations-brief")
+
+    @mock.patch(
+        "frontdesk.views.prioritize_operations_tasks",
+        side_effect=gemini.GeminiError("Gemini is not configured."),
+    )
+    @mock.patch("frontdesk.views.generate_operations_summary", return_value="")
+    def test_operations_brief_shows_counts_if_ai_prioritization_is_unavailable(self, generate_summary, prioritize):
+        self.new_request()
+        make_thread(patient=self.patient, category=MessageThread.Category.APPOINTMENTS)
+
+        post_response = self.client.post(
+            reverse("frontdesk:operations_brief"),
+            {"action": "generate_operations_brief"},
+        )
+
+        self.assertRedirects(post_response, reverse("frontdesk:operations_brief"))
+        response = self.client.get(reverse("frontdesk:operations_brief"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Queue snapshot")
+        self.assertContains(response, "data-clear-operations-brief")
+        self.assertContains(response, "1 new")
+        self.assertContains(response, "0 under review")
+        self.assertContains(response, "1 unread")
+        self.assertContains(response, "AI prioritization is unavailable")
+        prioritize.assert_called_once()
 
 
 class RequestQueueTests(FrontDeskTestCase):
@@ -113,6 +248,76 @@ class RequestQueueTests(FrontDeskTestCase):
         req = self.new_request(first_name="Mike", last_name="anderson", date_of_birth=self.patient.date_of_birth)
         response = self.client.get(reverse("frontdesk:request_detail", args=[req.pk]))
         self.assertIn(self.patient, list(response.context["matches"]))
+
+    @mock.patch(
+        "frontdesk.views.gemini.translate_text_batch",
+        return_value=["I need an appointment.", "In the mornings", "Health Insurance"],
+    )
+    def test_front_office_can_translate_patient_request_fields_without_changing_request(self, translate_text_batch):
+        req = self.new_request(
+            reason="Necesito una cita.",
+            preferred_times="Por las mañanas",
+            insurance_other="Seguro Salud",
+        )
+
+        response = self.client.post(reverse("frontdesk:translate_request", args=[req.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "AI-generated English translation")
+        self.assertContains(response, "I need an appointment.")
+        self.assertContains(response, "Health Insurance")
+        translate_text_batch.assert_called_once_with(
+            ["Necesito una cita.", "Por las mañanas", "Seguro Salud"],
+            "English",
+            actor_role="front_office",
+            operation="appointment_request_translation",
+        )
+        req.refresh_from_db()
+        self.assertEqual(req.reason, "Necesito una cita.")
+        self.assertEqual(req.preferred_times, "Por las mañanas")
+        self.assertEqual(req.insurance_other, "Seguro Salud")
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action=AuditLog.Action.TRANSLATE_APPOINTMENT_REQUEST,
+                object_id=str(req.pk),
+            ).exists()
+        )
+
+    @mock.patch("frontdesk.views.gemini.translate_text_batch", return_value=["Necesito una cita."])
+    def test_patient_role_cannot_use_request_translation(self, translate_text_batch):
+        req = self.new_request()
+        self.client.force_login(make_user("patient"))
+
+        response = self.client.post(reverse("frontdesk:translate_request", args=[req.pk]))
+
+        self.assertEqual(response.status_code, 403)
+        translate_text_batch.assert_not_called()
+
+    @mock.patch("frontdesk.views.gemini.translate_text_batch", return_value=["I need an appointment."])
+    def test_another_front_office_user_can_translate_request(self, translate_text_batch):
+        req = self.new_request(reason="Necesito una cita.")
+        self.client.force_login(make_user("front_office"))
+
+        response = self.client.post(reverse("frontdesk:translate_request", args=[req.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        translate_text_batch.assert_called_once()
+
+    @mock.patch(
+        "frontdesk.views.gemini.translate_text_batch",
+        side_effect=gemini.GeminiError("unavailable"),
+    )
+    def test_request_translation_failure_preserves_request(self, translate_text_batch):
+        req = self.new_request(reason="Necesito una cita.")
+
+        response = self.client.post(
+            reverse("frontdesk:translate_request", args=[req.pk]),
+            follow=True,
+        )
+
+        self.assertContains(response, "translation service is unavailable")
+        req.refresh_from_db()
+        self.assertEqual(req.reason, "Necesito una cita.")
 
 
 class RequestActionTests(FrontDeskTestCase):
@@ -283,6 +488,98 @@ class FrontDeskMessageTests(FrontDeskTestCase):
         closed = make_thread(patient=self.patient, category="billing", status=MessageThread.Status.CLOSED)
         response = self.client.get(reverse("frontdesk:messages") + "?status=closed")
         self.assertEqual(list(response.context["page"]), [closed])
+
+    @mock.patch("frontdesk.views.gemini.translate_to_english", return_value="Hello, I need to reschedule.")
+    def test_patient_message_can_be_translated_without_changing_original(self, generate_text):
+        thread = make_thread(patient=self.patient, category="billing")
+        message = Message.objects.create(
+            thread=thread,
+            sender_name="Mike Anderson",
+            from_patient=True,
+            body="Hola, necesito cambiar mi cita.",
+        )
+
+        response = self.client.post(
+            reverse("frontdesk:translate_message", args=[thread.pk, message.pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Translate with AI")
+        self.assertContains(response, "AI-generated English translation")
+        self.assertContains(response, "Hello, I need to reschedule.")
+        generate_text.assert_called_once()
+        message.refresh_from_db()
+        self.assertEqual(message.body, "Hola, necesito cambiar mi cita.")
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action=AuditLog.Action.TRANSLATE_MESSAGE,
+                patient=self.patient,
+                object_id=str(message.pk),
+            ).exists()
+        )
+
+    def test_only_patient_messages_in_front_office_threads_can_be_translated(self):
+        thread = make_thread(patient=self.patient, category="billing")
+        staff_message = Message.objects.create(
+            thread=thread,
+            sender_name="Brit Hale",
+            from_patient=False,
+            body="We can help with that.",
+        )
+        clinical_thread = make_thread(patient=self.patient, category="clinical")
+        clinical_message = Message.objects.create(
+            thread=clinical_thread,
+            sender_name="Mike Anderson",
+            from_patient=True,
+            body="Hola.",
+        )
+
+        staff_response = self.client.post(
+            reverse("frontdesk:translate_message", args=[thread.pk, staff_message.pk])
+        )
+        clinical_response = self.client.post(
+            reverse("frontdesk:translate_message", args=[clinical_thread.pk, clinical_message.pk])
+        )
+
+        self.assertEqual(staff_response.status_code, 404)
+        self.assertEqual(clinical_response.status_code, 404)
+
+    @mock.patch("frontdesk.views.gemini.translate_to_english", return_value="Hello.")
+    def test_patient_cannot_access_translation_endpoint(self, generate_text):
+        thread = make_thread(patient=self.patient, category="billing")
+        message = Message.objects.create(
+            thread=thread,
+            sender_name="Mike Anderson",
+            from_patient=True,
+            body="Hola.",
+        )
+        self.client.force_login(make_user("patient"))
+
+        response = self.client.post(
+            reverse("frontdesk:translate_message", args=[thread.pk, message.pk])
+        )
+
+        self.assertEqual(response.status_code, 403)
+        generate_text.assert_not_called()
+
+    @mock.patch("frontdesk.views.gemini.translate_to_english", side_effect=gemini.GeminiError("unavailable"))
+    def test_translation_failure_keeps_original_and_shows_error(self, generate_text):
+        thread = make_thread(patient=self.patient, category="billing")
+        message = Message.objects.create(
+            thread=thread,
+            sender_name="Mike Anderson",
+            from_patient=True,
+            body="Hola.",
+        )
+
+        response = self.client.post(
+            reverse("frontdesk:translate_message", args=[thread.pk, message.pk]),
+            follow=True,
+        )
+
+        self.assertContains(response, "translation service is unavailable")
+        message.refresh_from_db()
+        self.assertEqual(message.body, "Hola.")
 
 
 class PatientLookupTests(FrontDeskTestCase):
