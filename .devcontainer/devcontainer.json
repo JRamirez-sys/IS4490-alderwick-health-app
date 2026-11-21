@@ -9,6 +9,10 @@
     "GEMINI_API_KEY": {
       "description": "API key for Gemini (Google AI Studio or a GCP project). Used by clinic/gemini.py; test it at /dev/gemini/.",
       "documentationUrl": "https://ai.google.dev/gemini-api/docs/api-key"
+    },
+    "langsmithkey": {
+      "description": "LangSmith API key for privacy-filtered AI observability.",
+      "documentationUrl": "https://docs.langchain.com/langsmith/observability-quickstart"
     }
   },
   "updateContentCommand": "pip install --user -r requirements.txt",

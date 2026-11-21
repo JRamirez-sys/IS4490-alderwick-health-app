@@ -23,16 +23,19 @@ Example, from any view or service:
     except gemini.GeminiError as exc:
         summary = None  # show a friendly message instead of crashing the page
 
-Prompts and replies are never written to the logs, only the model name and timing.
+Prompts and replies are never written to application logs or LangSmith traces.
+LangSmith traces contain operation/model metadata, output length, and token counts.
 """
 
 import json
 import logging
 import os
 import time
+from functools import lru_cache
 
 from google import genai
 from google.genai import types
+from langsmith import Client, traceable, tracing_context
 
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
 
@@ -110,6 +113,41 @@ def get_client():
     return genai.Client(api_key=key, vertexai=uses_vertex_ai())
 
 
+def langsmith_api_key():
+    return os.environ.get("LANGSMITH_API_KEY") or os.environ.get("langsmithkey") or ""
+
+
+@lru_cache(maxsize=1)
+def _get_langsmith_client(api_key):
+    return Client(api_key=api_key)
+
+
+def _trace_inputs(inputs):
+    return {key: inputs[key] for key in ("model", "operation") if inputs.get(key)}
+
+
+def _trace_outputs(response):
+    output = {"output_length": len(getattr(response, "text", "") or "")}
+    usage = getattr(response, "usage_metadata", None)
+    if usage is not None:
+        for key in ("prompt_token_count", "candidates_token_count", "total_token_count"):
+            value = getattr(usage, key, None)
+            if isinstance(value, int):
+                output[key] = value
+    return output
+
+
+@traceable(
+    run_type="llm",
+    name="Gemini generate content",
+    process_inputs=_trace_inputs,
+    process_outputs=_trace_outputs,
+    exceptions_to_handle=(Exception,),
+)
+def _traced_generate_content(client, *, model, prompt, config, operation):
+    return client.models.generate_content(model=model, contents=prompt, config=config)
+
+
 def _record_operation(
     *,
     operation,
@@ -160,7 +198,28 @@ def _generate_content(
     started = time.monotonic()
     try:
         client = get_client()
-        response = client.models.generate_content(model=model, contents=prompt, config=config)
+        langsmith_key = langsmith_api_key()
+        if langsmith_key:
+            try:
+                langsmith_client = _get_langsmith_client(langsmith_key)
+            except Exception as exc:
+                logger.warning("langsmith_client_init_failed error=%s", type(exc).__name__)
+                response = client.models.generate_content(model=model, contents=prompt, config=config)
+            else:
+                with tracing_context(
+                    client=langsmith_client,
+                    project_name="alderwick-health",
+                    enabled=True,
+                ):
+                    response = _traced_generate_content(
+                        client,
+                        model=model,
+                        prompt=prompt,
+                        config=config,
+                        operation=operation,
+                    )
+        else:
+            response = client.models.generate_content(model=model, contents=prompt, config=config)
     except Exception as exc:
         duration_ms = round((time.monotonic() - started) * 1000)
         _record_operation(

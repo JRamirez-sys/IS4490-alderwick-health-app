@@ -1,6 +1,6 @@
 {% extends "layouts/staff.html" %}
 {% load static %}
-{% block title %}Policy assistant | Alderwick Family Health{% endblock %}
+{% block title %}Employee assistant | Alderwick Family Health{% endblock %}
 {% block workspace_name %}{% if user.is_doctor %}Clinician{% else %}Front Office{% endif %}{% endblock %}
 {% block sidebar %}
 {% if user.is_doctor %}
@@ -10,7 +10,7 @@
 <a class="nav-item" href="{% url 'clinician:patients' %}">My patients</a>
 <a class="nav-item" href="{% url 'clinician:inbox' %}">Patient messages</a>
 <div class="nav-label">Reference</div>
-<a class="nav-item active" href="{% url 'clinic:staff_assistant' %}"><span class="ai-nav-content">{% include "includes/ai_sparkle.html" %}Policy assistant</span><span class="ai-badge">AI</span></a>
+<a class="nav-item active" href="{% url 'clinic:staff_assistant' %}"><span class="ai-nav-content">{% include "includes/ai_sparkle.html" %}Employee assistant</span><span class="ai-badge">AI</span></a>
 <a class="nav-item" href="{% url 'clinic:medicine_lookup' %}"><span class="ai-nav-content">{% include "includes/ai_sparkle.html" %}Medicine lookup</span><span class="ai-badge">AI</span></a>
 <a class="nav-item" href="{% url 'public:resource_list' %}" target="_blank" rel="noopener">Practice policies</a>
 {% else %}
@@ -20,7 +20,7 @@
 <a class="nav-item" href="{% url 'frontdesk:schedule' %}">Schedule</a>
 <a class="nav-item" href="{% url 'frontdesk:messages' %}">Patient messages</a>
 <a class="nav-item" href="{% url 'frontdesk:patient_search' %}">Patient lookup</a>
-<a class="nav-item active" href="{% url 'clinic:staff_assistant' %}"><span class="ai-nav-content">{% include "includes/ai_sparkle.html" %}Policy assistant</span><span class="ai-badge">AI</span></a>
+<a class="nav-item active" href="{% url 'clinic:staff_assistant' %}"><span class="ai-nav-content">{% include "includes/ai_sparkle.html" %}Employee assistant</span><span class="ai-badge">AI</span></a>
 <a class="nav-item" href="{% url 'clinic:medicine_lookup' %}"><span class="ai-nav-content">{% include "includes/ai_sparkle.html" %}Medicine lookup</span><span class="ai-badge">AI</span></a>
 <div class="nav-label">Practice</div>
 <a class="nav-item" href="{% url 'public:resource_list' %}" target="_blank" rel="noopener">Policies and FAQ</a>
@@ -29,8 +29,8 @@
 {% block content %}
 <div class="page-header">
   <div>
-    <h1>Policy assistant</h1>
-    <p>Ask about published practice policies or draft a response for staff review.</p>
+    <h1>Employee assistant</h1>
+    <p>Ask about published practice policies and procedures, get general medicine information, or draft a response for staff review.</p>
   </div>
 </div>
 {% include "clinic/includes/staff_assistant_widget.html" %}

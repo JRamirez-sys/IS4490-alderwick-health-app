@@ -62,6 +62,66 @@ class GeminiClientTests(TestCase):
             model="test-model", contents="Hello", config=None
         )
 
+    @mock.patch.dict(os.environ, {"GEMINI_API_KEY": "k", "langsmithkey": "ls-test"}, clear=True)
+    @mock.patch("clinic.gemini._get_langsmith_client")
+    @mock.patch("clinic.gemini._traced_generate_content", return_value=mock.Mock(text="Hi there"))
+    @mock.patch("clinic.gemini.genai.Client")
+    @mock.patch("clinic.gemini.tracing_context")
+    def test_configured_langsmith_key_traces_model_call(
+        self, tracing_context, client_class, traced_call, langsmith_client_factory
+    ):
+        langsmith_client = mock.Mock()
+        langsmith_client_factory.return_value = langsmith_client
+
+        self.assertEqual(gemini.generate_text("Hello"), "Hi there")
+
+        langsmith_client_factory.assert_called_once_with("ls-test")
+        tracing_context.assert_called_once_with(
+            client=langsmith_client,
+            project_name="alderwick-health",
+            enabled=True,
+        )
+        traced_call.assert_called_once_with(
+            client_class.return_value,
+            model=gemini.model_name(),
+            prompt="Hello",
+            config=None,
+            operation="text_generation",
+        )
+
+    def test_langsmith_trace_payload_excludes_prompts_and_replies(self):
+        response = mock.Mock(
+            text="A confidential reply",
+            usage_metadata=mock.Mock(
+                prompt_token_count=12,
+                candidates_token_count=8,
+                total_token_count=20,
+            ),
+        )
+
+        inputs = gemini._trace_inputs(
+            {
+                "model": "gemini-test",
+                "operation": "message_translation",
+                "prompt": "A confidential prompt",
+                "config": {"system_instruction": "Confidential instructions"},
+            }
+        )
+        outputs = gemini._trace_outputs(response)
+
+        self.assertEqual(inputs, {"model": "gemini-test", "operation": "message_translation"})
+        self.assertEqual(
+            outputs,
+            {
+                "output_length": len("A confidential reply"),
+                "prompt_token_count": 12,
+                "candidates_token_count": 8,
+                "total_token_count": 20,
+            },
+        )
+        self.assertNotIn("A confidential prompt", repr(inputs))
+        self.assertNotIn("A confidential reply", repr(outputs))
+
     @mock.patch.dict(os.environ, {"GEMINI_API_KEY": "k"}, clear=False)
     @mock.patch("clinic.gemini.genai.Client")
     def test_generate_text_supports_json_responses(self, client_class):

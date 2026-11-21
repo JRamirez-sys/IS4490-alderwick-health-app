@@ -21,8 +21,9 @@ class SignInView(auth_views.LoginView):
             messages.info(
                 self.request,
                 format_html(
-                    "<strong>New: Policy assistant.</strong> Ask questions about published practice policies "
-                    "or draft a response for staff review. <a href='{}'>See what it can do</a>.",
+                    "<strong>New: Employee assistant.</strong> Ask about published practice policies and "
+                    "procedures, get general medicine information, or draft a response for staff review. "
+                    "<a href='{}'>See what it can do</a>.",
                     assistant_url,
                 ),
             )

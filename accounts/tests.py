@@ -64,7 +64,7 @@ class SignInTests(TestCase):
                 self.assertRedirects(home, reverse(url_name), fetch_redirect_response=False)
                 self.client.logout()
 
-    def test_staff_login_shows_policy_assistant_intro_once(self):
+    def test_staff_login_shows_employee_assistant_intro_once(self):
         for role, destination in [
             (User.Role.FRONT_OFFICE, "frontdesk:dashboard"),
             (User.Role.DOCTOR, "clinician:dashboard"),
@@ -77,12 +77,12 @@ class SignInTests(TestCase):
                 self.client.get(reverse("accounts:home"))
                 workspace = self.client.get(reverse(destination))
 
-                self.assertContains(workspace, "New: Policy assistant.")
-                self.assertContains(workspace, "published practice policies")
+                self.assertContains(workspace, "New: Employee assistant.")
+                self.assertContains(workspace, "published practice policies and procedures")
                 self.assertContains(workspace, reverse("clinic:staff_assistant"))
 
                 next_page = self.client.get(reverse(destination))
-                self.assertNotContains(next_page, "New: Policy assistant.")
+                self.assertNotContains(next_page, "New: Employee assistant.")
                 self.client.logout()
 
     def test_patient_login_does_not_show_staff_assistant_intro(self):
@@ -92,7 +92,7 @@ class SignInTests(TestCase):
 
         response = self.client.get(reverse("portal:dashboard"))
 
-        self.assertNotContains(response, "New: Policy assistant.")
+        self.assertNotContains(response, "New: Employee assistant.")
 
     def test_bad_password_shows_error(self):
         user = make_user(User.Role.PATIENT)

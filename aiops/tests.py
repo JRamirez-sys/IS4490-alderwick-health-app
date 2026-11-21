@@ -65,7 +65,7 @@ class AIOperationsTests(TestCase):
         response = self.client.get(reverse("aiops:index"))
 
         self.assertContains(response, "AI agent inventory")
-        self.assertContains(response, "Staff policy assistant")
+        self.assertContains(response, "Employee assistant")
         self.assertContains(response, "Published policy retrieval")
         self.assertContains(response, "Daily operations brief")
         self.assertContains(response, "Medicine lookup")

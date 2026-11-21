@@ -21,8 +21,8 @@ AI_AGENT_ANALYTICS_DAYS = 30
 AI_AGENT_CATALOG = (
     {
         "slug": "staff-policy-assistant",
-        "name": "Staff policy assistant",
-        "description": "Answers policy questions and drafts staff replies from published practice policies.",
+        "name": "Employee assistant",
+        "description": "Answers policy and procedure questions from published documents, routes general medicine questions to grounded lookup, and drafts staff replies.",
         "operation_codes": (AIOperation.Operation.STAFF_POLICY_ASSISTANT,),
         "tools": (
             {
@@ -33,8 +33,12 @@ AI_AGENT_CATALOG = (
                 "name": "Gemini text generation",
                 "description": "Answers policy questions or drafts text; it cannot send messages or change records.",
             },
+            {
+                "name": "Web-grounded medicine lookup",
+                "description": "Uses public-source citations for general medicine questions; it does not access patient charts.",
+            },
         ),
-        "data_access": "Published policies and the submitted conversation; no patient-chart retrieval.",
+        "data_access": "Published practice documents or one general medicine question; no patient-chart retrieval or patient-specific medical advice.",
     },
     {
         "slug": "daily-operations-brief",

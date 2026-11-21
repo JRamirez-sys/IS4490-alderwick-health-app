@@ -10,7 +10,7 @@
 <a class="nav-item {% if name == 'messages' or name == 'thread' %}active{% endif %}" href="{% url 'frontdesk:messages' %}">Patient messages</a>
 <a class="nav-item {% if 'patient' in name or name == 'book_for_patient' %}active{% endif %}" href="{% url 'frontdesk:patient_search' %}">Patient lookup</a>
 <a class="nav-item {% if name == 'chat_requests' or name == 'chat_request_detail' %}active{% endif %}" href="{% url 'chatbot_staff:chat_requests' %}">Website chat requests</a>
-<a class="nav-item {% if name == 'staff_assistant' or name == 'staff_assistant_chat' %}active{% endif %}" href="{% url 'clinic:staff_assistant' %}"><span class="ai-nav-content">{% include "includes/ai_sparkle.html" %}Policy assistant</span><span class="ai-badge">AI</span></a>
+<a class="nav-item {% if name == 'staff_assistant' or name == 'staff_assistant_chat' %}active{% endif %}" href="{% url 'clinic:staff_assistant' %}"><span class="ai-nav-content">{% include "includes/ai_sparkle.html" %}Employee assistant</span><span class="ai-badge">AI</span></a>
 <a class="nav-item {% if name == 'medicine_lookup' or name == 'medicine_lookup_search' %}active{% endif %}" href="{% url 'clinic:medicine_lookup' %}"><span class="ai-nav-content">{% include "includes/ai_sparkle.html" %}Medicine lookup</span><span class="ai-badge">AI</span></a>
 <div class="nav-label">Practice</div>
 <a class="nav-item" href="{% url 'public:resource_list' %}" target="_blank" rel="noopener">Policies and FAQ</a>

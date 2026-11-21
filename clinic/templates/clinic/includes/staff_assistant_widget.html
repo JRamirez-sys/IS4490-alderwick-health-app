@@ -2,14 +2,14 @@
 <section class="card assistant-card" aria-labelledby="assistant-title">
   <div class="card-header">
     <div class="assistant-heading">
-      <h2 id="assistant-title">Policy assistant</h2>
-      <p class="muted">Ask about published practice policies or draft a response for review.</p>
+      <h2 id="assistant-title">Employee assistant</h2>
+      <p class="muted">Policy and procedure answers use published practice documents. Medicine answers use trusted public sources and are general information only.</p>
     </div>
   </div>
   <div id="assistant-messages" class="assistant-messages" role="log" aria-live="polite" aria-relevant="additions">
     <div class="assistant-message assistant-message-bot assistant-welcome">
       <strong>How can I help?</strong>
-      <p>Ask a policy question or draft a staff response. I’ll use published practice policies and link to the sources.</p>
+      <p>Ask about a published practice policy or procedure, ask a general medicine question, or draft a staff response. I’ll link to the sources I use.</p>
     </div>
   </div>
   <form id="assistant-form" class="assistant-form" data-endpoint="{% url 'clinic:staff_assistant_chat' %}">
@@ -17,7 +17,8 @@
     <div class="field assistant-mode-field">
       <label for="assistant-mode">Task</label>
       <select class="input" id="assistant-mode" name="mode">
-        <option value="answer">Ask a policy or workflow question</option>
+        <option value="answer">Ask about policies and procedures</option>
+        <option value="medicine">Ask a general medicine question</option>
         <option value="draft">Draft a response for review</option>
       </select>
     </div>
@@ -25,7 +26,7 @@
       <div class="field assistant-message-field">
         <label for="assistant-input">Question or draft context</label>
         <textarea class="input" id="assistant-input" name="message" rows="3" maxlength="4000" required
-          placeholder="Type a policy question or de-identified context…"></textarea>
+          placeholder="Ask about a policy or procedure…"></textarea>
       </div>
       <div class="assistant-form-footer">
         <span id="assistant-status" class="muted" role="status"></span>
@@ -37,6 +38,7 @@
         </button>
       </div>
     </div>
+    <p class="muted">Never include patient names, identifiers, or patient-specific clinical details. Medicine answers are not medical advice.</p>
   </form>
 </section>
 <script src="{% static 'js/staff_assistant.js' %}" defer></script>

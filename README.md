@@ -67,7 +67,13 @@ Optional environment variables:
 
 On your own computer, run `export GEMINI_API_KEY=...` before `runserver`. The `/dev/gemini/` page is not linked from the application and returns 404 when `DJANGO_DEBUG=0`. Send synthetic text only, never real patient information.
 
+## Connecting to LangSmith
+
+For local development, put `LANGSMITH_API_KEY=your-key` in the root `.env` file; Django loads it at startup, and `.env` is ignored by Git. An environment variable already set by your shell takes precedence. In Codespaces, add your key as a Codespaces secret named `langsmithkey` and grant it access to this repository; rebuild or restart an already running Codespace to pick it up. AI operations are traced to the `alderwick-health` LangSmith project. Traces include the model, operation, output length, and token counts, but exclude prompts, model replies, and raw exception details. LangSmith tracing is disabled when the key is not configured.
+
 The staff **Medicine lookup** uses Google Search grounding and requires a configured Gemini key and a model that supports Google Search. It sends only the medicine name entered by staff, displays citations from trusted public domains, and does not access patient records. Search-grounding availability and pricing depend on your Google AI/Vertex AI account.
+
+The staff **Employee assistant** combines questions about published practice policies and procedures, general medicine questions with trusted public citations, and response drafting for staff review. Medicine questions use the same Google Search grounding and patient-data safeguards as Medicine lookup. The assistant does not access patient records or provide patient-specific medical advice.
 
 ## Demo data
 

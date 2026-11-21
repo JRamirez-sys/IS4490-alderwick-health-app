@@ -58,7 +58,7 @@ Patients can only ever see their own records.
 - View each location's daily schedule and check patients in, mark no-shows, or cancel
 - Answer front-office patient messages
 - Look up patients and book appointments by phone
-- Use the staff policy assistant to ask about published practice policies or draft a response for review
+- Use the **Employee assistant** to ask about published practice policies and procedures, get general medicine information, or draft a response for review
 - Use **Medicine lookup** in the left navigation for general medication information with links to public sources
 - Open **Operations brief** in the left navigation for a week-ahead appointment calendar, open requests, unread messages, recent policy/provider/insurance changes, and an AI-generated aggregate overview
 
@@ -70,7 +70,7 @@ Front-office staff see demographics, insurance, and appointments, but **not** cl
 - Open the charts of patients they have a care relationship with (primary care patients, and anyone they have seen or scheduled)
 - Write, save, and sign visit notes. Signing locks the note and releases the after-visit summary to the patient portal.
 - Answer clinical messages assigned to them
-- Use the staff policy assistant to ask about published practice policies or draft a response for review
+- Use the **Employee assistant** to ask about published practice policies and procedures, get general medicine information, or draft a response for review
 - Use **Medicine lookup** in the left navigation for general medication information with links to public sources
 - Generate an on-demand AI operations brief that ranks their unsigned notes and patient messages awaiting a reply by backlog and age
 
@@ -78,18 +78,19 @@ The operations brief's AI summary receives aggregate appointment and work-queue 
 
 Doctors cannot open charts of patients outside their care relationships. Every attempt is recorded in the audit log.
 
-### Staff policy assistant
+### Employee assistant
 
-- Front-office employees and doctors can open the **Policy assistant** from their staff workspace.
-- After staff sign in, a one-time notice links to the assistant and briefly explains what it can do.
-- Ask questions grounded in published policy documents, or switch to draft mode for an editable response suggestion. Policy references link to the source documents.
+- Front-office employees and doctors can open the **Employee assistant** from their staff workspace.
+- Choose policy/procedure questions, general medicine questions, or response drafting from the task selector.
+- Policy and procedure answers use published practice documents and link to their sources. If those documents do not specify an answer, check with a supervisor.
+- Medicine answers use Google Search grounding and link to trusted public sources. They are general information only, not medical advice; do not ask patient-specific questions or request dosing/treatment decisions.
 - The assistant does not access patient charts, send messages, schedule visits, or make clinical decisions. Staff must review every draft before using it.
-- Do not enter real patient information, identifiers, or clinical details. Conversations stay in the current page and are not saved; AI operation metadata is recorded without prompts or replies.
-- Answers can be incomplete or incorrect. Check the linked policy or ask a supervisor when the assistant cannot find a definitive answer.
+- Never enter real patient information, identifiers, or clinical details. Conversations stay in the current page and are not saved; AI operation metadata is recorded without prompts or replies.
+- Answers can be incomplete or incorrect. Verify information against the linked sources or ask a supervisor.
 
 ### Medicine lookup
 
-- Front-office employees and doctors can search for general medicine information using Google Search grounding.
+- Front-office employees and doctors can search for general medicine information using Google Search grounding through the Employee assistant or Medicine lookup.
 - Results include links from FDA, DailyMed, MedlinePlus, or NIH domains. If no trusted-source citations are available, the lookup does not return an answer.
 - Results are organized into an overview, common side effects, and important warnings when supported by trusted sources. An official DailyMed label image may appear when one exact matching product label is available.
 - Label images are for reference only, not pill identification; products may differ by strength or manufacturer.

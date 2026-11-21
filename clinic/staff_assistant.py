@@ -1,4 +1,4 @@
-"""Staff-only policy Q&A and response drafting."""
+"""Staff-only policy, procedure, and medicine Q&A plus response drafting."""
 
 import json
 
@@ -9,7 +9,7 @@ from django.views.decorators.http import require_POST
 from accounts.decorators import role_required
 from accounts.models import User
 from aiops.models import AIConfiguration, AIOperation
-from clinic import gemini
+from clinic import gemini, medicine_lookup
 from clinic.models import PolicyDocument
 
 staff_assistant_required = role_required(User.Role.FRONT_OFFICE, User.Role.DOCTOR)
@@ -28,9 +28,10 @@ def index(request):
 
 
 def _validate_conversation(payload):
-    if not isinstance(payload, dict) or payload.get("mode") not in ("answer", "draft"):
-        raise ValueError("Choose whether to ask a policy question or draft a response.")
+    if not isinstance(payload, dict) or payload.get("mode") not in ("answer", "medicine", "draft"):
+        raise ValueError("Choose a policy question, medicine question, or response draft.")
 
+    mode = payload["mode"]
     messages = payload.get("messages")
     if not isinstance(messages, list) or not messages or len(messages) > MAX_MESSAGES or len(messages) % 2 == 0:
         raise ValueError("The conversation is invalid. Start a new question and try again.")
@@ -51,7 +52,13 @@ def _validate_conversation(payload):
         raise ValueError("This conversation is too long. Start a new question and try again.")
     if clean_messages[-1]["role"] != "user":
         raise ValueError("Send a question or draft request to continue.")
-    return payload["mode"], clean_messages
+    if mode == "medicine":
+        if len(clean_messages) != 1:
+            raise ValueError("Ask one general medicine question at a time.")
+        clean_messages[0]["content"] = medicine_lookup._validate_medicine(
+            {"medicine": clean_messages[0]["content"]}
+        )
+    return mode, clean_messages
 
 
 def _system_instruction(mode):
@@ -63,10 +70,10 @@ def _system_instruction(mode):
         )
     else:
         task = (
-            "Answer the staff member's policy or workflow question using only the supplied published practice "
-            "policies. If the policies do not answer it, say that the approved policy documents do not specify "
+            "Answer the staff member's policy, procedure, or workflow question using only the supplied published "
+            "practice documents. If the documents do not answer it, say that the approved documents do not specify "
             "the answer and recommend checking with a supervisor. Do not guess or present general knowledge as "
-            "Alderwick policy."
+            "Alderwick policy or procedure."
         )
     return (
         "You are Alderwick Family Health's internal policy and workflow assistant for front-office staff and "
@@ -135,6 +142,11 @@ def _generate_reply(mode, messages, documents, actor_role):
     }
 
 
+def _generate_medicine_reply(messages, actor_role):
+    result = medicine_lookup._lookup_medicine(messages[-1]["content"], actor_role)
+    return {"answer": result["answer"], "sources": result["sources"]}
+
+
 @staff_assistant_required
 @require_POST
 def chat(request):
@@ -147,6 +159,16 @@ def chat(request):
     except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
         message = str(exc) or "The request is invalid. Please try again."
         return JsonResponse({"error": message}, status=400)
+
+    if mode == "medicine":
+        try:
+            reply = _generate_medicine_reply(conversation, request.user.role)
+        except gemini.GeminiError:
+            return JsonResponse(
+                {"error": "The assistant is unavailable right now. Please try again later."},
+                status=503,
+            )
+        return JsonResponse(reply)
 
     documents = list(PolicyDocument.objects.filter(is_public=True).order_by("display_order", "title"))
     if not documents:

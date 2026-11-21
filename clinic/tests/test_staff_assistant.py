@@ -41,17 +41,19 @@ class StaffPolicyAssistantTests(TestCase):
         self.client.force_login(make_user(User.Role.FRONT_OFFICE))
         front_office_response = self.client.get(reverse("clinic:staff_assistant"))
         self.assertEqual(front_office_response.status_code, 200)
-        self.assertContains(front_office_response, "Policy assistant")
+        self.assertContains(front_office_response, "Employee assistant")
         self.assertContains(front_office_response, "Draft a response")
+        self.assertContains(front_office_response, "Ask a general medicine question")
+        self.assertContains(front_office_response, "policies and procedures")
         self.assertLess(
-            front_office_response.content.index(b'Policy assistant</span><span class="ai-badge">AI</span></a>'),
+            front_office_response.content.index(b'Employee assistant</span><span class="ai-badge">AI</span></a>'),
             front_office_response.content.index(b'<div class="nav-label">Practice</div>'),
         )
 
         self.client.force_login(make_user(User.Role.DOCTOR))
         doctor_response = self.client.get(reverse("clinic:staff_assistant"))
         self.assertEqual(doctor_response.status_code, 200)
-        self.assertContains(doctor_response, "Policy assistant")
+        self.assertContains(doctor_response, "Employee assistant")
         self.assertContains(doctor_response, "Draft a response")
 
     def test_front_office_dashboard_links_to_assistant_page(self):
@@ -101,6 +103,7 @@ class StaffPolicyAssistantTests(TestCase):
         self.assertNotIn(self.private_policy.body, generate.call_args.args[0])
         self.assertEqual(generate.call_args.kwargs["actor_role"], User.Role.DOCTOR)
         self.assertEqual(generate.call_args.kwargs["operation"], "staff_policy_assistant")
+        self.assertIn("policy, procedure, or workflow", generate.call_args.kwargs["system_instruction"])
 
     def test_draft_mode_uses_staff_review_instructions(self):
         self.client.force_login(make_user(User.Role.FRONT_OFFICE))
@@ -115,6 +118,43 @@ class StaffPolicyAssistantTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("Do not send the response", generate.call_args.kwargs["system_instruction"])
+
+    def test_medicine_mode_uses_grounded_lookup_and_returns_citations(self):
+        self.client.force_login(make_user(User.Role.DOCTOR))
+        result = {
+            "answer": "General medicine information.",
+            "sources": [{"title": "DailyMed", "url": "https://dailymed.nlm.nih.gov/example"}],
+            "image": None,
+        }
+        with mock.patch("clinic.staff_assistant.medicine_lookup._lookup_medicine", return_value=result) as lookup:
+            response = self.post_chat(
+                [{"role": "user", "content": "What are common side effects of metformin?"}],
+                mode="medicine",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"answer": result["answer"], "sources": result["sources"]})
+        lookup.assert_called_once_with("What are common side effects of metformin?", User.Role.DOCTOR)
+
+    def test_medicine_mode_rejects_patient_details_and_prior_turns(self):
+        self.client.force_login(make_user(User.Role.FRONT_OFFICE))
+        with mock.patch("clinic.staff_assistant.medicine_lookup._lookup_medicine") as lookup:
+            response = self.post_chat(
+                [{"role": "user", "content": "Metformin for patient born 01/02/1980"}],
+                mode="medicine",
+            )
+            previous_turn_response = self.post_chat(
+                [
+                    {"role": "user", "content": "Metformin"},
+                    {"role": "assistant", "content": "General information."},
+                    {"role": "user", "content": "What about side effects?"},
+                ],
+                mode="medicine",
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(previous_turn_response.status_code, 400)
+        lookup.assert_not_called()
 
     def test_invalid_conversation_is_rejected_without_calling_model(self):
         self.client.force_login(make_user(User.Role.FRONT_OFFICE))
