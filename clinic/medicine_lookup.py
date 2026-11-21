@@ -11,6 +11,7 @@ from django.http import JsonResponse
 from django.shortcuts import render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
+from google.genai import types
 
 from accounts.decorators import role_required
 from accounts.models import User
@@ -280,6 +281,48 @@ def _lookup_medicine(medicine, actor_role):
     }
 
 
+def medicine_lookup_tool(medicine, actor_role):
+    """Gemini-callable tool wrapper for grounded medicine lookup."""
+    validated_medicine = _validate_medicine({"medicine": medicine})
+    return _lookup_medicine(validated_medicine, actor_role)
+
+
+def run_medicine_lookup_agent(medicine, actor_role):
+    """Have Gemini invoke the medicine_lookup_tool, then return the existing lookup shape."""
+    result = gemini.run_function_agent(
+        json.dumps({"medicine": medicine}, ensure_ascii=False),
+        tool_name="medicine_lookup_tool",
+        tool_description="Look up general, public-source medication information and trusted citations.",
+        tool_parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "medicine": types.Schema(
+                    type=types.Type.STRING,
+                    description="A medicine name or one brief general question about one medicine.",
+                ),
+            },
+            required=["medicine"],
+        ),
+        tool_handler=lambda **args: medicine_lookup_tool(args["medicine"], actor_role),
+        system_instruction=(
+            "For a medicine lookup request, call medicine_lookup_tool with a medicine name or brief general question. "
+            "Do not call the tool for patient-specific details. Preserve the tool's answer and source links."
+        ),
+        operation=AIOperation.Operation.MEDICINE_LOOKUP,
+        actor_role=actor_role,
+        input_count=1,
+    )
+    tool_result = result["tool_result"]
+    if not result["tool_called"] or not isinstance(tool_result, dict):
+        raise gemini.GeminiError("The medicine lookup agent did not call medicine_lookup_tool.")
+
+    return {
+        "answer": tool_result["answer"],
+        "sources": tool_result["sources"],
+        "image": tool_result.get("image"),
+    }
+
+
 @medicine_lookup_required
 @require_POST
 def search(request):
@@ -293,7 +336,7 @@ def search(request):
         return JsonResponse({"error": str(exc) or "The request is invalid. Please try again."}, status=400)
 
     try:
-        result = _lookup_medicine(medicine, request.user.role)
+        result = run_medicine_lookup_agent(medicine, request.user.role)
     except gemini.GeminiError:
         return JsonResponse(
             {"error": "Medicine lookup is unavailable right now. Please try again later."},
@@ -323,10 +366,21 @@ def allergy_matches(request):
         )
 
     authorized_patient_ids = patients_for_provider(provider).values("pk")
-    allergies = (
-        Allergy.objects.filter(patient_id__in=authorized_patient_ids, substance__iexact=medicine)
-        .select_related("patient")
-        .order_by("patient__last_name", "patient__first_name", "substance")
+
+    def find_authorized_allergy_matches():
+        return list(
+            Allergy.objects.filter(patient_id__in=authorized_patient_ids, substance__iexact=medicine)
+            .select_related("patient")
+            .order_by("patient__last_name", "patient__first_name", "substance")
+        )
+
+    allergies = gemini.run_tool_call(
+        "authorized_patient_allergy_match",
+        find_authorized_allergy_matches,
+        operation=AIOperation.Operation.MEDICINE_LOOKUP,
+        actor_role=request.user.role,
+        input_metadata={"scope": "authorized_doctor_patient_panel", "medicine_length": len(medicine)},
+        tool_output_metadata=lambda result: {"match_count": len(result)},
     )
     matches_by_patient = {}
     for allergy in allergies:

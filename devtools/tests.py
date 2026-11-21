@@ -122,6 +122,92 @@ class GeminiClientTests(TestCase):
         self.assertNotIn("A confidential prompt", repr(inputs))
         self.assertNotIn("A confidential reply", repr(outputs))
 
+    def test_langsmith_trace_payload_includes_google_search_tool_metadata_only(self):
+        candidate = mock.Mock()
+        candidate.grounding_metadata.grounding_chunks = [
+            mock.Mock(web=mock.Mock(uri="https://dailymed.nlm.nih.gov/example")),
+        ]
+        response = mock.Mock(
+            text="Grounded answer",
+            candidates=[candidate],
+            usage_metadata=None,
+        )
+
+        inputs = gemini._trace_inputs(
+            {
+                "model": "gemini-test",
+                "operation": "medicine_lookup",
+                "prompt": "private medicine prompt",
+                "config": mock.Mock(tools=[mock.Mock(google_search=mock.Mock())]),
+            }
+        )
+        outputs = gemini._trace_outputs(response)
+
+        self.assertEqual(inputs["tools"], ["google_search"])
+        self.assertEqual(outputs["grounded_source_count"], 1)
+        self.assertNotIn("private medicine prompt", repr(inputs))
+        self.assertNotIn("dailymed.nlm.nih.gov", repr(outputs))
+
+    @mock.patch.dict(os.environ, {"LANGSMITH_API_KEY": "ls-test", "GEMINI_API_KEY": "k"}, clear=True)
+    @mock.patch("clinic.gemini._get_langsmith_client")
+    @mock.patch("clinic.gemini.tracing_context")
+    @mock.patch("clinic.gemini._traced_agent_turn")
+    def test_employee_agent_turn_is_traced_as_metadata_only_chain(
+        self, traced_turn, tracing_context, langsmith_client_factory
+    ):
+        langsmith_client = mock.Mock()
+        langsmith_client_factory.return_value = langsmith_client
+        traced_turn.return_value = {
+            "answer": "Drafted answer",
+            "sources": [{"title": "Source", "url": "/public/"}],
+        }
+
+        result = gemini.run_agent_turn(
+            "Employee assistant",
+            lambda: {"answer": "Drafted answer", "sources": [{"title": "Source", "url": "/public/"}]},
+            operation="public_website_assistant",
+            mode="website",
+            actor_role="front_office",
+            input_count=1,
+        )
+
+        self.assertEqual(result["answer"], "Drafted answer")
+        traced_turn.assert_called_once()
+        turn_kwargs = traced_turn.call_args.kwargs
+        self.assertEqual(turn_kwargs["agent"], "Employee assistant")
+        self.assertEqual(turn_kwargs["operation"], "public_website_assistant")
+        self.assertEqual(turn_kwargs["mode"], "website")
+        self.assertEqual(turn_kwargs["actor_role"], "front_office")
+
+    @mock.patch.dict(os.environ, {"LANGSMITH_API_KEY": "ls-test", "GEMINI_API_KEY": "k"}, clear=True)
+    @mock.patch("clinic.gemini._get_langsmith_client")
+    @mock.patch("clinic.gemini.tracing_context")
+    @mock.patch("clinic.gemini._traced_application_tool")
+    def test_application_tool_call_is_traced_with_aggregate_output(
+        self, traced_tool, tracing_context, langsmith_client_factory
+    ):
+        langsmith_client = mock.Mock()
+        langsmith_client_factory.return_value = langsmith_client
+        tracing_context.return_value.__enter__ = mock.Mock()
+        tracing_context.return_value.__exit__ = mock.Mock()
+        traced_tool.return_value = {"tool_result": [object(), object()]}
+
+        result = gemini.run_tool_call(
+            "role_scoped_queue_aggregation",
+            lambda: [object(), object()],
+            operation="daily_operations_brief",
+            actor_role="front_office",
+            input_metadata={"scope": "aggregate_queue_counts_and_ages"},
+            tool_output_metadata=lambda tool_result: {"task_count": len(tool_result)},
+        )
+
+        self.assertEqual(len(result), 2)
+        traced_tool.assert_called_once()
+        tool_kwargs = traced_tool.call_args.kwargs
+        self.assertEqual(tool_kwargs["tool_name"], "role_scoped_queue_aggregation")
+        self.assertEqual(tool_kwargs["operation"], "daily_operations_brief")
+        self.assertEqual(tool_kwargs["input_metadata"]["scope"], "aggregate_queue_counts_and_ages")
+
     @mock.patch.dict(os.environ, {"GEMINI_API_KEY": "k"}, clear=False)
     @mock.patch("clinic.gemini.genai.Client")
     def test_generate_text_supports_json_responses(self, client_class):

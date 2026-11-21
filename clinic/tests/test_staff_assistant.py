@@ -42,8 +42,7 @@ class StaffPolicyAssistantTests(TestCase):
         front_office_response = self.client.get(reverse("clinic:staff_assistant"))
         self.assertEqual(front_office_response.status_code, 200)
         self.assertContains(front_office_response, "Employee assistant")
-        self.assertContains(front_office_response, "Draft a response")
-        self.assertContains(front_office_response, "Ask a general medicine question")
+        self.assertNotContains(front_office_response, 'data-assistant-mode')
         self.assertContains(front_office_response, "policies and procedures")
         self.assertLess(
             front_office_response.content.index(b'Employee assistant</span><span class="ai-badge">AI</span></a>'),
@@ -54,7 +53,7 @@ class StaffPolicyAssistantTests(TestCase):
         doctor_response = self.client.get(reverse("clinic:staff_assistant"))
         self.assertEqual(doctor_response.status_code, 200)
         self.assertContains(doctor_response, "Employee assistant")
-        self.assertContains(doctor_response, "Draft a response")
+        self.assertNotContains(doctor_response, 'data-assistant-mode')
 
     def test_front_office_dashboard_links_to_assistant_page(self):
         self.client.force_login(make_user(User.Role.FRONT_OFFICE))
@@ -119,6 +118,63 @@ class StaffPolicyAssistantTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Do not send the response", generate.call_args.kwargs["system_instruction"])
 
+    def test_auto_mode_infers_public_website_question(self):
+        self.client.force_login(make_user(User.Role.FRONT_OFFICE))
+        search_results = [{
+            "title": "Alderwick Sandy Clinic",
+            "url": "/locations/sandy/",
+            "text": "Saturday: 9:00 AM-1:00 PM",
+            "category": "location",
+        }]
+
+        with (
+            mock.patch("clinic.staff_assistant._search_public_website", return_value=search_results),
+            mock.patch("clinic.staff_assistant.gemini.generate_text", return_value="Saturday hours are 9:00 AM-1:00 PM."),
+        ):
+            chat_response = self.post_chat(
+                [{"role": "user", "content": "What are Saturday hours at Sandy clinic?"}],
+                mode="auto",
+            )
+
+        self.assertEqual(chat_response.status_code, 200)
+
+    def test_public_website_mode_searches_public_records_and_drafts_answer(self):
+        self.client.force_login(make_user(User.Role.FRONT_OFFICE))
+        search_results = [{
+            "title": "Alderwick Sandy Clinic",
+            "url": "/locations/sandy/",
+            "text": "Saturday: 9:00 AM-1:00 PM",
+            "category": "location",
+        }]
+
+        with (
+            mock.patch("clinic.staff_assistant._search_public_website", return_value=search_results) as search,
+            mock.patch("clinic.staff_assistant.gemini.generate_text", return_value="The Sandy clinic is open Saturday from 9:00 AM to 1:00 PM."),
+        ):
+            chat_response = self.post_chat(
+                [{"role": "user", "content": "What are Saturday hours at the Sandy clinic?"}],
+                mode="website",
+            )
+
+        self.assertEqual(chat_response.status_code, 200)
+        self.assertEqual(chat_response.json()["answer"], "The Sandy clinic is open Saturday from 9:00 AM to 1:00 PM.")
+        self.assertEqual(chat_response.json()["sources"], [{"title": "Alderwick Sandy Clinic", "url": "/locations/sandy/"}])
+        search.assert_called_once_with("What are Saturday hours at the Sandy clinic?")
+
+    def test_public_website_mode_fails_closed_without_search_results(self):
+        self.client.force_login(make_user(User.Role.FRONT_OFFICE))
+        with (
+            mock.patch("clinic.staff_assistant._search_public_website", return_value=[]),
+            mock.patch("clinic.staff_assistant.gemini.generate_text") as generate,
+        ):
+            chat_response = self.post_chat(
+                [{"role": "user", "content": "What are my appointments?"}],
+                mode="website",
+            )
+
+        self.assertEqual(chat_response.status_code, 503)
+        generate.assert_not_called()
+
     def test_medicine_mode_uses_grounded_lookup_and_returns_citations(self):
         self.client.force_login(make_user(User.Role.DOCTOR))
         result = {
@@ -126,7 +182,7 @@ class StaffPolicyAssistantTests(TestCase):
             "sources": [{"title": "DailyMed", "url": "https://dailymed.nlm.nih.gov/example"}],
             "image": None,
         }
-        with mock.patch("clinic.staff_assistant.medicine_lookup._lookup_medicine", return_value=result) as lookup:
+        with mock.patch("clinic.staff_assistant.medicine_lookup.run_medicine_lookup_agent", return_value=result) as lookup:
             response = self.post_chat(
                 [{"role": "user", "content": "What are common side effects of metformin?"}],
                 mode="medicine",
@@ -138,7 +194,7 @@ class StaffPolicyAssistantTests(TestCase):
 
     def test_medicine_mode_rejects_patient_details_and_prior_turns(self):
         self.client.force_login(make_user(User.Role.FRONT_OFFICE))
-        with mock.patch("clinic.staff_assistant.medicine_lookup._lookup_medicine") as lookup:
+        with mock.patch("clinic.staff_assistant.medicine_lookup.run_medicine_lookup_agent") as lookup:
             response = self.post_chat(
                 [{"role": "user", "content": "Metformin for patient born 01/02/1980"}],
                 mode="medicine",

@@ -41,6 +41,23 @@ AI_AGENT_CATALOG = (
         "data_access": "Published practice documents or one general medicine question; no patient-chart retrieval or patient-specific medical advice.",
     },
     {
+        "slug": "public-website-assistant",
+        "name": "Public website assistant",
+        "description": "Answers employee questions about public hours, locations, providers, insurance, booking, and practice resources.",
+        "operation_codes": (AIOperation.Operation.PUBLIC_WEBSITE_ASSISTANT,),
+        "tools": (
+            {
+                "name": "Public website search",
+                "description": "Searches indexed public office, provider, insurance, and policy records used by the public pages.",
+            },
+            {
+                "name": "Public source citation filter",
+                "description": "Returns citations only for public location, provider, insurance, and patient-resource pages.",
+            },
+        ),
+        "data_access": "Receives only the employee's public information question and conversation context. It cannot retrieve patient or staff records.",
+    },
+    {
         "slug": "daily-operations-brief",
         "name": "Daily operations brief",
         "description": "Prioritizes staff work queues by aggregate task counts and age.",

@@ -49,6 +49,8 @@
           {% if item.key == "appointment_requests" %}
           <span>{{ item.new_count }} new</span>
           <span>{{ item.under_review_count }} under review</span>
+          {% elif item.key == "website_chat_requests" %}
+          <span>{{ item.open_count }} open</span>
           {% elif item.unread_count != None %}
           <span>{{ item.unread_count }} unread</span>
           {% endif %}
@@ -62,7 +64,7 @@
     <p class="operations-brief-empty" role="status">{{ operations_brief_empty_message }}</p>
     {% endif %}
     <div class="operations-changes">
-      <h3>Recent policy, provider, and insurance changes</h3>
+      <h3>Recent policy, provider, insurance, and patient-directory changes</h3>
       {% if operations_changes %}
       <ul class="operations-change-list">
         {% for change in operations_changes %}

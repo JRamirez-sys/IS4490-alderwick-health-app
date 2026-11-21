@@ -1,36 +1,29 @@
 {% load static %}
-<section class="card assistant-card" aria-labelledby="assistant-title">
+{% with prefix=assistant_id_prefix|default:"assistant" %}
+<section class="card assistant-card" data-assistant-widget aria-labelledby="{{ prefix }}-title">
   <div class="card-header">
     <div class="assistant-heading">
-      <h2 id="assistant-title">Employee assistant</h2>
+      <h2 id="{{ prefix }}-title">Employee assistant</h2>
       <p class="muted">Policy and procedure answers use published practice documents. Medicine answers use trusted public sources and are general information only.</p>
     </div>
   </div>
-  <div id="assistant-messages" class="assistant-messages" role="log" aria-live="polite" aria-relevant="additions">
+  <div id="{{ prefix }}-messages" class="assistant-messages" data-assistant-messages role="log" aria-live="polite" aria-relevant="additions">
     <div class="assistant-message assistant-message-bot assistant-welcome">
       <strong>How can I help?</strong>
-      <p>Ask about a published practice policy or procedure, ask a general medicine question, or draft a staff response. I’ll link to the sources I use.</p>
+      <p>Ask about a public website topic, published practice policy or procedure, general medicine question, or draft a staff response. I’ll link to the sources I use.</p>
     </div>
   </div>
-  <form id="assistant-form" class="assistant-form" data-endpoint="{% url 'clinic:staff_assistant_chat' %}">
+  <form id="{{ prefix }}-form" class="assistant-form" data-assistant-form data-endpoint="{% url 'clinic:staff_assistant_chat' %}">
     {% csrf_token %}
-    <div class="field assistant-mode-field">
-      <label for="assistant-mode">Task</label>
-      <select class="input" id="assistant-mode" name="mode">
-        <option value="answer">Ask about policies and procedures</option>
-        <option value="medicine">Ask a general medicine question</option>
-        <option value="draft">Draft a response for review</option>
-      </select>
-    </div>
     <div class="assistant-composer">
       <div class="field assistant-message-field">
-        <label for="assistant-input">Question or draft context</label>
-        <textarea class="input" id="assistant-input" name="message" rows="3" maxlength="4000" required
-          placeholder="Ask about a policy or procedure…"></textarea>
+        <label for="{{ prefix }}-input">Question or draft context</label>
+        <textarea class="input" id="{{ prefix }}-input" name="message" rows="3" maxlength="4000" required data-assistant-input
+          placeholder="Ask about a policy, website, medicine, or draft a response…"></textarea>
       </div>
       <div class="assistant-form-footer">
-        <span id="assistant-status" class="muted" role="status"></span>
-        <button id="assistant-submit" class="btn" type="submit">
+        <span id="{{ prefix }}-status" class="muted" role="status" data-assistant-status></span>
+        <button id="{{ prefix }}-submit" class="btn" type="submit" data-assistant-submit>
           Send
           <svg aria-hidden="true" viewBox="0 0 20 20" fill="none">
             <path d="M3 10h13m-5-5 5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
@@ -41,4 +34,5 @@
     <p class="muted">Never include patient names, identifiers, or patient-specific clinical details. Medicine answers are not medical advice.</p>
   </form>
 </section>
-<script src="{% static 'js/staff_assistant.js' %}" defer></script>
+{% endwith %}
+<script src="{% static 'js/staff_assistant.js' %}?v=20261121-4" defer></script>

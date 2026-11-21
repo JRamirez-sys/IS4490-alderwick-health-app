@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from accounts.models import User
 from clinic import gemini
+from chatbot.models import ChatContactRequest
 from clinic.models import Appointment, AppointmentRequest, InsurancePlan, MessageThread, PolicyDocument, Provider, Visit
 from clinic.operations_brief import (
     generate_operations_brief,
@@ -64,6 +65,29 @@ class OperationsBriefTests(TestCase):
         self.assertNotIn("Private message contents", generate.call_args.args[0])
         self.assertEqual(generate.call_args.kwargs["actor_role"], User.Role.FRONT_OFFICE)
         self.assertEqual(generate.call_args.kwargs["operation"], "daily_operations_brief")
+
+    def test_front_office_brief_includes_open_website_chat_requests(self):
+        ChatContactRequest.objects.create(name="Visitor One", email="one@example.com", message="Question")
+        ChatContactRequest.objects.create(name="Visitor Two", phone="8015550100", message="Another question")
+        ChatContactRequest.objects.create(
+            name="Closed Visitor",
+            email="closed@example.com",
+            message="Handled",
+            status=ChatContactRequest.Status.CLOSED,
+        )
+
+        model_response = json.dumps({
+            "priority_order": ["website_chat_requests"]
+        })
+        with mock.patch("clinic.operations_brief.gemini.generate_text", return_value=model_response) as generate:
+            brief = generate_operations_brief(User.Role.FRONT_OFFICE)
+
+        prompt = json.loads(generate.call_args.args[0])
+        metrics = {queue["key"]: queue for queue in prompt["queues"]}
+        self.assertEqual([item["key"] for item in brief][0], "website_chat_requests")
+        self.assertEqual(metrics["website_chat_requests"]["count"], 2)
+        self.assertNotIn("Visitor One", generate.call_args.args[0])
+        self.assertNotIn("Question", generate.call_args.args[0])
 
     def test_clinician_brief_is_scoped_to_their_notes_and_messages(self):
         provider = make_provider()
@@ -197,8 +221,8 @@ class OperationsBriefTests(TestCase):
         change_feed = get_recent_operations_changes(now=now)
         changes = change_feed["events"]
 
-        self.assertEqual(len(changes), 3)
-        self.assertEqual({change["record_type"] for change in changes}, {"provider", "insurance plan", "policy"})
+        self.assertEqual(len(changes), 4)
+        self.assertEqual({change["record_type"] for change in changes}, {"provider", "insurance plan", "policy", "patient directory"})
         self.assertTrue(all(change["action"] == "Updated" for change in changes))
         self.assertNotIn(patient.full_name, str(changes))
         self.assertEqual(
@@ -206,7 +230,7 @@ class OperationsBriefTests(TestCase):
                 (change["record_type"], change["action"], change["count"])
                 for change in change_feed["counts"]
             },
-            {("provider", "Updated", 1), ("insurance plan", "Updated", 1), ("policy", "Updated", 1)},
+            {("provider", "Updated", 1), ("insurance plan", "Updated", 1), ("policy", "Updated", 1), ("patient directory", "Updated", 1)},
         )
         self.assertFalse(change_feed["truncated"])
 
@@ -285,8 +309,9 @@ class OperationsBriefTests(TestCase):
         self.assertEqual(
             prompt["work_queues"],
             [
-                {"key": "appointment_requests", "count": 0, "over_24h": 0, "unread_count": 0},
-                {"key": "front_office_replies", "count": 2, "over_24h": 1, "unread_count": 2},
+                {"key": "appointment_requests", "count": 0, "over_24h": 0, "unread_count": 0, "open_count": 0},
+                {"key": "front_office_replies", "count": 2, "over_24h": 1, "unread_count": 2, "open_count": 0},
+                {"key": "website_chat_requests", "count": 0, "over_24h": 0, "unread_count": 0, "open_count": 0},
             ],
         )
         self.assertEqual(

@@ -97,6 +97,7 @@ def operations_brief(request):
             item["url"] = {
                 "appointment_requests": f'{reverse("frontdesk:requests")}?status=open',
                 "front_office_replies": reverse("frontdesk:messages"),
+                "website_chat_requests": reverse("chatbot_staff:chat_requests"),
             }[item["key"]]
         calendar = get_operations_calendar(office=request.user.office)
         changes = get_recent_operations_changes()

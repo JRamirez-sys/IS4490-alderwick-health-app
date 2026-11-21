@@ -179,6 +179,13 @@
     }
   }
 
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.isComposing) {
+      event.preventDefault();
+      if (!submit.disabled) form.requestSubmit(submit);
+    }
+  });
+
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const medicine = input.value.trim();

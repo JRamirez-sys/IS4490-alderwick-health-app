@@ -21,5 +21,10 @@
       {% block content %}{% endblock %}
     </div>
   </div>
+  {% block floating_assistant %}
+    {% if user.is_front_office or user.is_doctor %}
+      {% include "clinic/includes/staff_assistant_float.html" %}
+    {% endif %}
+  {% endblock %}
 </div>
 {% endblock %}

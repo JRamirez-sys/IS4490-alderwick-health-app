@@ -148,6 +148,13 @@
     if (event.key === "Escape" && !panel.hidden) closePanel();
   });
 
+  input.addEventListener("keydown", function (event) {
+    if (event.key === "Enter" && !event.isComposing) {
+      event.preventDefault();
+      inputForm.requestSubmit();
+    }
+  });
+
   inputForm.addEventListener("submit", function (event) {
     event.preventDefault();
     var text = input.value;
@@ -156,6 +163,15 @@
   });
 
   contactForm.querySelector("[data-action=cancel-contact]").addEventListener("click", hideContactForm);
+
+  var contactMessage = contactForm.elements.message;
+  contactMessage.addEventListener("keydown", function (event) {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      var submit = contactForm.querySelector("button[type=submit]");
+      if (!submit.disabled) contactForm.requestSubmit(submit);
+    }
+  });
 
   contactForm.addEventListener("submit", function (event) {
     event.preventDefault();

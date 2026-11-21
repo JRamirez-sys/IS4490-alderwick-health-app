@@ -318,6 +318,50 @@ class MedicineLookupAllergyTests(TestCase):
         self.assertEqual(response.status_code, 403)
 
 
+class MedicineLookupAgentTests(TestCase):
+    def test_medicine_lookup_tool_is_registered_and_executed_by_agent_loop(self):
+        function_call = types.FunctionCall(
+            name="medicine_lookup_tool",
+            args={"medicine": "metformin"},
+            id="call-1",
+        )
+        call_part = types.Part(function_call=function_call)
+        initial = mock.Mock(
+            text="",
+            candidates=[mock.Mock(content=mock.Mock(parts=[call_part]))],
+        )
+        final = mock.Mock(text="General medicine summary.", candidates=[])
+        tool_result = {
+            "answer": "General medicine summary.",
+            "sources": [{"title": "DailyMed", "url": "https://dailymed.nlm.nih.gov/example"}],
+            "image": None,
+        }
+
+        with (
+            mock.patch("clinic.gemini._generate_content", side_effect=[initial, final]) as generate,
+            mock.patch("clinic.gemini.run_tool_call", return_value=tool_result) as run_tool,
+        ):
+            result = gemini.run_function_agent(
+                '{"medicine":"metformin"}',
+                tool_name="medicine_lookup_tool",
+                tool_description="Look up medicine information.",
+                tool_parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={"medicine": types.Schema(type=types.Type.STRING)},
+                    required=["medicine"],
+                ),
+                tool_handler=lambda medicine: {"answer": "unused"},
+            )
+
+        self.assertTrue(result["tool_called"])
+        self.assertEqual(result["tool_result"], tool_result)
+        run_tool.assert_called_once()
+        self.assertEqual(run_tool.call_args.args[0], "medicine_lookup_tool")
+        self.assertEqual(generate.call_count, 2)
+        declaration = generate.call_args_list[0].kwargs["tools"][0].function_declarations[0]
+        self.assertEqual(declaration.name, "medicine_lookup_tool")
+
+
 class GeminiGoogleSearchTests(TestCase):
     def test_google_search_grounding_tool_is_attached_and_logged(self):
         client = mock.Mock()

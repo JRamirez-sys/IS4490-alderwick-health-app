@@ -1,5 +1,6 @@
 {% extends "layouts/staff.html" %}
 {% load static %}
+{% block floating_assistant %}{% endblock %}
 {% block title %}Employee assistant | Alderwick Family Health{% endblock %}
 {% block workspace_name %}{% if user.is_doctor %}Clinician{% else %}Front Office{% endif %}{% endblock %}
 {% block sidebar %}

@@ -1,0 +1,11 @@
+{% load static %}
+<div class="staff-assistant-float" data-assistant-widget>
+  <button type="button" class="staff-assistant-launcher" aria-expanded="false" aria-controls="staff-assistant-panel" aria-label="Open Employee assistant">
+    {% include "includes/ai_sparkle.html" %}
+    <span>Ask AI</span>
+  </button>
+  <section class="staff-assistant-panel" id="staff-assistant-panel" role="dialog" aria-modal="false" aria-labelledby="floating-assistant-title" hidden>
+    <button type="button" class="staff-assistant-close" aria-label="Close Employee assistant">&times;</button>
+    {% include "clinic/includes/staff_assistant_widget.html" with assistant_id_prefix="floating-assistant" %}
+  </section>
+</div>

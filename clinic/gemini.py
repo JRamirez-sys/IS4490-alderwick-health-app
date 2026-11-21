@@ -24,7 +24,9 @@ Example, from any view or service:
         summary = None  # show a friendly message instead of crashing the page
 
 Prompts and replies are never written to application logs or LangSmith traces.
-LangSmith traces contain operation/model metadata, output length, and token counts.
+LangSmith traces contain operation/model metadata, output length, token counts, and tool metadata.
+Tool traces include names and aggregate results only; medicine names, source URLs, patient data,
+and other request/result content are excluded.
 """
 
 import json
@@ -122,8 +124,22 @@ def _get_langsmith_client(api_key):
     return Client(api_key=api_key)
 
 
+def _tool_names(config):
+    names = []
+    for tool in getattr(config, "tools", []) or []:
+        if getattr(tool, "google_search", None) is not None:
+            names.append("google_search")
+    return names
+
+
 def _trace_inputs(inputs):
-    return {key: inputs[key] for key in ("model", "operation") if inputs.get(key)}
+    output = {key: inputs[key] for key in ("model", "operation") if inputs.get(key)}
+    config = inputs.get("config")
+    if config is not None:
+        tool_names = _tool_names(config)
+        if tool_names:
+            output["tools"] = tool_names
+    return output
 
 
 def _trace_outputs(response):
@@ -134,7 +150,167 @@ def _trace_outputs(response):
             value = getattr(usage, key, None)
             if isinstance(value, int):
                 output[key] = value
+
+    grounded_source_count = 0
+    candidates = getattr(response, "candidates", [])
+    if not isinstance(candidates, (list, tuple)):
+        candidates = []
+    for candidate in candidates:
+        metadata = getattr(candidate, "grounding_metadata", None)
+        chunks = getattr(metadata, "grounding_chunks", []) if metadata is not None else []
+        if not isinstance(chunks, (list, tuple)):
+            chunks = []
+        for chunk in chunks:
+            web_source = getattr(chunk, "web", None)
+            if web_source is not None and getattr(web_source, "uri", None):
+                grounded_source_count += 1
+    if grounded_source_count:
+        output["grounded_source_count"] = grounded_source_count
     return output
+
+
+def _trace_tool_inputs(inputs):
+    output = {}
+    for key in ("tool_name", "operation", "actor_role"):
+        if inputs.get(key):
+            output[key] = inputs[key]
+    metadata = inputs.get("input_metadata")
+    if isinstance(metadata, dict):
+        output.update(metadata)
+    return output
+
+
+def _trace_tool_outputs(result):
+    if isinstance(result, dict) and isinstance(result.get("trace_output"), dict):
+        return result["trace_output"]
+    return {"status": "succeeded"}
+
+
+@traceable(
+    run_type="tool",
+    name="Alderwick application tool",
+    process_inputs=_trace_tool_inputs,
+    process_outputs=_trace_tool_outputs,
+    exceptions_to_handle=(Exception,),
+)
+def _traced_application_tool(
+    *, tool_name, operation, actor_role, input_metadata, tool_output_metadata, tool, tool_args, tool_kwargs
+):
+    result = tool(*tool_args, **tool_kwargs)
+    return {
+        "tool_result": result,
+        "trace_output": {"status": "succeeded", **tool_output_metadata(result)},
+    }
+
+
+def _trace_agent_inputs(inputs):
+    return {
+        key: inputs[key]
+        for key in ("agent", "operation", "mode", "actor_role", "input_count")
+        if inputs.get(key) not in (None, "", 0)
+    }
+
+
+def _trace_agent_outputs(result):
+    if not isinstance(result, dict):
+        return {"status": "succeeded"}
+    sources = result.get("sources")
+    output = {"status": "succeeded"}
+    if isinstance(sources, list):
+        output["source_count"] = len(sources)
+    return output
+
+
+@traceable(
+    run_type="chain",
+    name="Alderwick employee agent turn",
+    process_inputs=_trace_agent_inputs,
+    process_outputs=_trace_agent_outputs,
+    exceptions_to_handle=(Exception,),
+)
+def _traced_agent_turn(*, agent, operation, mode, actor_role, input_count, turn):
+    return turn()
+
+
+def run_agent_turn(
+    agent,
+    turn,
+    *,
+    operation="text_generation",
+    mode="",
+    actor_role="",
+    input_count=1,
+):
+    """Execute an employee AI turn under one metadata-only LangSmith chain span."""
+    langsmith_key = langsmith_api_key()
+    if not langsmith_key:
+        return turn()
+
+    try:
+        langsmith_client = _get_langsmith_client(langsmith_key)
+    except Exception as exc:
+        logger.warning("langsmith_agent_trace_failed error=%s", type(exc).__name__)
+        return turn()
+
+    with tracing_context(
+        client=langsmith_client,
+        project_name="alderwick-health",
+        enabled=True,
+    ):
+        return _traced_agent_turn(
+            agent=agent,
+            operation=operation,
+            mode=mode,
+            actor_role=actor_role,
+            input_count=input_count,
+            turn=turn,
+        )
+
+
+def run_tool_call(
+    tool_name,
+    tool,
+    *,
+    operation="text_generation",
+    actor_role="",
+    input_metadata=None,
+    tool_output_metadata=None,
+    tool_args=(),
+    tool_kwargs=None,
+):
+    """Execute an application tool and optionally record a metadata-only LangSmith tool span."""
+    tool_kwargs = tool_kwargs or {}
+    tool_output_metadata = tool_output_metadata or (lambda result: {})
+    langsmith_key = langsmith_api_key()
+    if not langsmith_key:
+        return tool(*tool_args, **tool_kwargs)
+
+    try:
+        langsmith_client = _get_langsmith_client(langsmith_key)
+    except Exception as exc:
+        logger.warning("langsmith_tool_trace_failed error=%s", type(exc).__name__)
+        return tool(*tool_args, **tool_kwargs)
+
+    try:
+        with tracing_context(
+            client=langsmith_client,
+            project_name="alderwick-health",
+            enabled=True,
+        ):
+            traced = _traced_application_tool(
+                tool_name=tool_name,
+                operation=operation,
+                actor_role=actor_role,
+                input_metadata=input_metadata or {},
+                tool_output_metadata=tool_output_metadata,
+                tool=tool,
+                tool_args=tool_args,
+                tool_kwargs=tool_kwargs,
+            )
+        return traced["tool_result"]
+    except Exception as exc:
+        logger.warning("langsmith_tool_trace_failed error=%s", type(exc).__name__)
+        raise
 
 
 @traceable(
@@ -284,6 +460,95 @@ def generate_text(
         input_count=input_count,
     )
     return response.text or ""
+
+
+def run_function_agent(
+    prompt,
+    *,
+    tool_name,
+    tool_description,
+    tool_parameters,
+    tool_handler,
+    system_instruction=None,
+    model=None,
+    operation="text_generation",
+    actor_role="",
+    input_count=1,
+):
+    """Run a single-tool Gemini agent loop and return the final text plus tool result."""
+    tool = types.Tool(function_declarations=[types.FunctionDeclaration(
+        name=tool_name,
+        description=tool_description,
+        parameters=tool_parameters,
+    )])
+
+    initial = _generate_content(
+        prompt,
+        system_instruction=system_instruction,
+        model=model,
+        tools=[tool],
+        operation=operation,
+        actor_role=actor_role,
+        input_count=input_count,
+    )
+
+    function_call = None
+    function_call_parts = []
+    for candidate in getattr(initial, "candidates", []) or []:
+        content = getattr(candidate, "content", None)
+        for part in getattr(content, "parts", []) or []:
+            call = getattr(part, "function_call", None)
+            if call is not None:
+                function_call = call
+                function_call_parts.append(part)
+                break
+        if function_call is not None:
+            break
+
+    if function_call is None:
+        return {"text": (initial.text or "").strip(), "tool_result": None, "tool_called": False}
+    if getattr(function_call, "name", None) != tool_name:
+        raise GeminiError("The model requested an unrecognized tool.")
+
+    args = dict(getattr(function_call, "args", None) or {})
+    tool_result = run_tool_call(
+        tool_name,
+        tool_handler,
+        operation=operation,
+        actor_role=actor_role,
+        input_metadata={"scope": "medicine_lookup"},
+        tool_output_metadata=lambda result: {
+            "source_count": len(result.get("sources", [])) if isinstance(result, dict) else 0,
+        },
+        tool_kwargs=args,
+    )
+
+    model_content = types.Content(role="model", parts=function_call_parts)
+    tool_response = types.Part(function_response=types.FunctionResponse(
+        id=getattr(function_call, "id", None),
+        name=tool_name,
+        response={"result": tool_result},
+    ))
+    final = _generate_content(
+        [
+            prompt,
+            model_content,
+            types.Content(role="tool", parts=[tool_response]),
+        ],
+        system_instruction=(
+            (system_instruction or "")
+            + " Use the medicine_lookup_tool result as the source of truth. Preserve its linked sources and do not add unsupported facts."
+        ),
+        model=model,
+        operation=operation,
+        actor_role=actor_role,
+        input_count=input_count,
+    )
+    return {
+        "text": (final.text or "").strip(),
+        "tool_result": tool_result,
+        "tool_called": True,
+    }
 
 
 def generate_with_google_search(

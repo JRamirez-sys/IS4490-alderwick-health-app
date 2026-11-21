@@ -15,6 +15,7 @@ class AIOperation(models.Model):
         STAFF_POLICY_ASSISTANT = "staff_policy_assistant", "Staff policy assistant"
         DAILY_OPERATIONS_BRIEF = "daily_operations_brief", "Daily operations brief"
         MEDICINE_LOOKUP = "medicine_lookup", "Medicine lookup"
+        PUBLIC_WEBSITE_ASSISTANT = "public_website_assistant", "Public website assistant"
 
     class Status(models.TextChoices):
         SUCCEEDED = "succeeded", "Succeeded"
